@@ -372,15 +372,23 @@ export default function StudentRegistration() {
     }
   };
 
-  // ── Shared branding header (matches the login page) ──────────────
-  const Header = () => (
-    <div className="flex items-center gap-3 py-4 mb-2">
-      <img src={logo} alt="USJ Logo" className="w-14 h-14 object-contain flex-shrink-0" />
-      <div>
-        <p className="font-semibold text-gray-800 text-sm leading-tight">University of Sri Jayewardenepura</p>
-        <p className="text-xs text-blue-600">Sports Facility Portal</p>
+  // ── Top navigation bar — logo + branding only (matches the public site) ──
+  const NavBar = () => (
+    <nav
+      className="fixed top-0 left-0 right-0 z-50"
+      style={{ backgroundColor: "rgba(10,20,50,0.97)", backdropFilter: "blur(8px)" }}
+    >
+      <div className="max-w-[114.2857rem] mx-auto px-8 sm:px-12 lg:px-16 flex items-center h-20">
+        {/* Logo + branding */}
+        <button className="flex items-center gap-2 sm:gap-3 min-w-0" onClick={() => navigate("/")}>
+          <img src={logo} alt="USJ" className="w-10 h-10 sm:w-12 sm:h-12 object-contain flex-shrink-0" />
+          <div className="text-left min-w-0">
+            <p className="text-white font-bold text-[0.7857rem] sm:text-lg leading-tight truncate">University of Sri Jayewardenepura</p>
+            <p className="text-[0.7143rem] sm:text-base leading-tight truncate" style={{ color: "#e8a020" }}>Physical Education Unit</p>
+          </div>
+        </button>
       </div>
-    </div>
+    </nav>
   );
 
   // Footer copyright shared by every step (matches the login page).
@@ -799,10 +807,9 @@ export default function StudentRegistration() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-100 via-blue-50 to-blue-200 m-0 px-4 sm:px-8 lg:px-12 py-8">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100 m-0 px-4 sm:px-8 lg:px-12 pt-28 pb-8">
+      <NavBar />
       <div className="max-w-[114.2857rem] mx-auto w-full">
-        <Header />
-
         <TabSteps />
 
         {/* ─────────────── TAB 1 — REGISTRATION DETAILS ─────────────── */}

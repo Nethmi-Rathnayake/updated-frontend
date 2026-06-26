@@ -39,6 +39,13 @@ export default function LoginPage() {
     setStep("otp");
   };
 
+  // Dismiss the "No Account Found" modal and keep the user on the login page
+  // (return to the email step so they can try a different address).
+  const closeNotRegistered = () => {
+    setNotRegistered(false);
+    setStep("email");
+  };
+
   // Runs when the user clicks "Send OTP" (via EmailStep's beforeSend hook).
   // Logging in requires an existing account, so we check registration FIRST and
   // block the OTP for unregistered emails — prompting them to register instead.
@@ -126,46 +133,6 @@ export default function LoginPage() {
     setLoginMessage(text);
     toast.success(text);
   };
-
-  // ── Not registered — prompt to register ───────────────────────────────────
-  if (notRegistered) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100 flex flex-col items-center justify-center m-0 px-8 sm:px-12 lg:px-16">
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8 text-center">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-amber-50">
-            <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">No Account Found</h2>
-          <p className="text-sm text-gray-500 mb-1">No registration exists for</p>
-          <p className="text-sm font-semibold text-blue-700 mb-5">{email}</p>
-          <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-4 mb-5">
-            <p className="text-base font-semibold text-amber-700">Please register to login.</p>
-          </div>
-          <button
-            onClick={() => navigate("/select-registration", { state: { email } })}
-            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm transition mb-3"
-          >
-            Register Now
-          </button>
-          <button
-            onClick={() => {
-              setNotRegistered(false);
-              setStep("email");
-              setEmail("");
-            }}
-            className="w-full text-blue-600 font-semibold text-sm hover:underline"
-          >
-            Back to Login
-          </button>
-        </div>
-        <p className="text-xs text-gray-500 mt-8">
-          © {new Date().getFullYear()} University of Sri Jayewardenepura
-        </p>
-      </div>
-    );
-  }
 
   // ── Post-login placeholder (registered user) ──────────────────────────────
   if (loginMessage) {
@@ -269,6 +236,59 @@ export default function LoginPage() {
           © {new Date().getFullYear()} University of Sri Jayewardenepura
         </p>
       </div>
+
+      {/* No Account Found — popup modal. Overlays the login page (position:
+          fixed) instead of navigating away, so the user stays put. */}
+      {notRegistered && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="no-account-title"
+          onClick={closeNotRegistered}
+        >
+          <div
+            className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close (X) */}
+            <button
+              type="button"
+              onClick={closeNotRegistered}
+              aria-label="Close"
+              className="absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-amber-50">
+              <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h2 id="no-account-title" className="text-xl font-bold text-gray-900 mb-1">No Account Found</h2>
+            <p className="text-sm text-gray-500 mb-1">No registration exists for</p>
+            <p className="text-sm font-semibold text-blue-700 mb-5 break-all">{email}</p>
+            <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-4 mb-5">
+              <p className="text-base font-semibold text-amber-700">Please register to login.</p>
+            </div>
+            <button
+              onClick={() => navigate("/select-registration", { state: { email } })}
+              className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm transition mb-3"
+            >
+              Register Now
+            </button>
+            <button
+              onClick={closeNotRegistered}
+              className="w-full text-blue-600 font-semibold text-sm hover:underline"
+            >
+              Back to Login
+            </button>
+          </div>
+        </div>
+      )}
     </AuthShell>
   );
 }
