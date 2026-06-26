@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global type scale. Every Tailwind text/spacing utility is rem-based, so the
+   root font-size is the single knob that scales the whole system. 14px is
+   -12.5% vs the 16px browser default — a more compact, comfortable UI.
+
+   The design reference is a 1600px-wide desktop at a 14px root
+   (14 / 1600 = 0.875vw). On desktop we anchor the root to 0.875vw so EVERY
+   width renders as a faithful, proportionally-scaled copy of that reference,
+   instead of cramming the same fixed sizes into a narrower/wider canvas. At
+   1600px this resolves to exactly 14px (identical to the original); at 1366px
+   it's ~12px, at 1920px it's capped. clamp() bounds it so it never gets too
+   small on compact laptops nor too large on big monitors. Mobile/tablet
+   (<1024px) keep the original flat 14px so phones are unaffected. */
+@layer base {
+  html {
+    font-size: 14px;
+  }
+
+  @media (min-width: 1024px) {
+    html {
+      font-size: clamp(12px, 0.875vw, 15.5px);
+    }
+  }
+
+  /* Horizontal breathing room so content never sits flush against the left/right
+     viewport edges, with no top/bottom inset. Applied app-wide on the body.
+     Fixed-position bars (e.g. the home navbar) sit relative to the viewport, so
+     they inset by the same 14px themselves to stay aligned with this gap. */
+  body {
+    margin: 0;
+    padding: 0;
+  }
+}
