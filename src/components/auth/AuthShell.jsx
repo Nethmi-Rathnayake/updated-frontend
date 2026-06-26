@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import logo from "../../assets/usjp-logo__1_-removebg-preview.png";
 import poolImg from "../../assets/swiming pool image.jpg";
 import universityImg from "../../assets/university image3.jpg";
 import image2 from "../../assets/image2.png";
@@ -52,15 +51,9 @@ export default function AuthShell({ children }) {
 
         {/* Foreground content */}
         <div className="relative z-10 flex flex-col justify-between h-full p-10 text-white">
-          <div className="flex items-center gap-4">
-            <img src={logo} alt="USJ Logo" className="w-20 h-20 object-contain" />
-            <div>
-              <p className="font-semibold text-xl leading-tight whitespace-nowrap">
-                University of Sri Jayewardenepura
-              </p>
-              <p className="text-base text-blue-100">Sports Facility Portal</p>
-            </div>
-          </div>
+          {/* Empty spacer — keeps the headline pinned to the bottom via the
+              parent's justify-between now that the branding header is removed. */}
+          <div />
 
           <div className="mb-2">
             <h2 className="text-3xl lg:text-5xl font-bold leading-snug mb-4">
