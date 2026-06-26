@@ -19,6 +19,7 @@ import AdminLogin from "./pages/admin/AdminLogin";
 import AdminLayout from "./pages/admin/AdminLayout";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import SystemUsers from "./pages/admin/SystemUsers";
+import Roles from "./pages/admin/Roles";
 
 function App() {
   return (
@@ -56,6 +57,14 @@ function App() {
               element={
                 <ProtectedRoute permission="view_system_users">
                   <SystemUsers />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="roles"
+              element={
+                <ProtectedRoute requireSuperAdmin>
+                  <Roles />
                 </ProtectedRoute>
               }
             />

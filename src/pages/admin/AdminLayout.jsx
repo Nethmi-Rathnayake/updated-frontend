@@ -5,22 +5,23 @@ import logo from "../../assets/usjp-logo__1_-removebg-preview.png";
 import { useAuth } from "../../hooks/useAuth";
 import { TOKENS, PAGE_BG, APP_FONT, Icon, ICONS, Avatar } from "../../components/common/DashboardUI";
 
-// Nav items for the back-office. Each is gated by a permission; Super Admin sees
-// everything (can() bypasses). Items the operator lacks permission for are
-// hidden. Roles & Permissions management is a planned follow-up — its entry is
-// intentionally omitted until that page exists.
+// Nav items for the back-office. Items are gated by either a permission or a
+// Super-Admin-only flag; entries the operator can't access are hidden. Roles &
+// Permissions management is restricted to the Super Admin (Admins only manage
+// users).
 const NAV = [
   { to: "/admin", label: "Dashboard", permission: null, end: true, icon: ICONS.dashboard },
   { to: "/admin/users", label: "System Users", permission: "view_system_users", icon: ICONS.users },
+  { to: "/admin/roles", label: "Roles & Permissions", superAdminOnly: true, icon: ICONS.roles },
 ];
 
 export default function AdminLayout() {
-  const { user, role, can, logout } = useAuth();
+  const { user, role, can, isSuperAdmin, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const items = NAV.filter((item) => can(item.permission));
+  const items = NAV.filter((item) => (item.superAdminOnly ? isSuperAdmin : can(item.permission)));
 
   // Current page title for the header (longest matching path wins so /admin/users
   // beats /admin).

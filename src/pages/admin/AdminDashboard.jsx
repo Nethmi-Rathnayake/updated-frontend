@@ -10,7 +10,7 @@ import { TOKENS, Icon, ICONS, StatCard } from "../../components/common/Dashboard
 // dashboard degrades gracefully for limited roles. Visual language matches the
 // member dashboards (stat cards, rounded-2xl white cards, blue accents).
 export default function AdminDashboard() {
-  const { user, role, permissions, can } = useAuth();
+  const { user, role, permissions, can, isSuperAdmin } = useAuth();
 
   const [userCount, setUserCount] = useState(null);
   const [activeCount, setActiveCount] = useState(null);
@@ -25,17 +25,18 @@ export default function AdminDashboard() {
         })
         .catch(() => {});
     }
-    if (can("view_roles")) {
+    // Roles are a Super-Admin-only module; Admins only manage users.
+    if (isSuperAdmin) {
       listRoles()
         .then((roles) => setRoleCount(roles.length))
         .catch(() => {});
     }
-  }, [can]);
+  }, [can, isSuperAdmin]);
 
   const cards = [
     { show: can("view_system_users"), label: "System Users", value: userCount, to: "/admin/users", icon: ICONS.users, accent: TOKENS.PRIMARY },
     { show: can("view_system_users"), label: "Active Users", value: activeCount, to: "/admin/users", icon: ICONS.userCheck, accent: "#16a34a" },
-    { show: can("view_roles"), label: "Roles", value: roleCount, to: null, icon: ICONS.roles, accent: "#7c3aed" },
+    { show: isSuperAdmin, label: "Roles", value: roleCount, to: "/admin/roles", icon: ICONS.roles, accent: "#7c3aed" },
   ].filter((c) => c.show);
 
   return (

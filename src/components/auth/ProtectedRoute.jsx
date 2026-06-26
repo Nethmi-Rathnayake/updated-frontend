@@ -7,10 +7,11 @@ import { TOKENS, PAGE_BG, APP_FONT, Icon, ICONS, Spinner } from "../common/Dashb
 //   - Not authenticated        -> redirect to /admin/login (remembering where
 //                                  they were headed so login can return there).
 //   - Authenticated but missing `permission` (if given) -> "no access" screen.
+//   - `requireSuperAdmin` set but the user isn't Super Admin -> "no access".
 //   - Still re-hydrating a stored token -> brief spinner (avoids a flash of the
 //     login page on refresh).
-export default function ProtectedRoute({ permission, children }) {
-  const { isAuthenticated, loading, can } = useAuth();
+export default function ProtectedRoute({ permission, requireSuperAdmin, children }) {
+  const { isAuthenticated, loading, can, isSuperAdmin } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -25,7 +26,7 @@ export default function ProtectedRoute({ permission, children }) {
     return <Navigate to="/admin/login" replace state={{ from: location.pathname }} />;
   }
 
-  if (permission && !can(permission)) {
+  if ((requireSuperAdmin && !isSuperAdmin) || (permission && !can(permission))) {
     return (
       <div className={`min-h-screen flex items-center justify-center ${PAGE_BG} px-4`} style={{ fontFamily: APP_FONT }}>
         <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8 text-center">
