@@ -59,8 +59,14 @@ const GROUPS = [
 const groupOf = (name) => GROUPS.find((g) => g.match(name)) || GROUPS[GROUPS.length - 1];
 
 // ── Permission selection matrix ─────────────────────────────────────────────
+// Friendly chooser: collapsible module sections (collapsed by default so the
+// ~70 permissions stay scannable), each showing a live "selected/total" badge
+// and a one-tap group toggle. A master toolbar offers search + Select-all /
+// Clear-all + a running count. Whole rows are clickable with a clear selected
+// state. Selection logic/state shape is unchanged (a Set of permission ids).
 function PermissionSelector({ permissions, selected, onChange, disabled }) {
   const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState(() => new Set()); // group keys collapsed
 
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -73,6 +79,17 @@ function PermissionSelector({ permissions, selected, onChange, disabled }) {
     filtered.forEach((p) => map.get(groupOf(p.name).key).items.push(p));
     return [...map.values()].filter((g) => g.items.length > 0);
   }, [permissions, query]);
+
+  const searching = query.trim().length > 0;
+  // While searching every matching group is forced open so results are visible.
+  const isOpen = (key) => searching || !collapsed.has(key);
+
+  const toggleOpen = (key) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
 
   const toggle = (id) => {
     if (disabled) return;
@@ -88,10 +105,17 @@ function PermissionSelector({ permissions, selected, onChange, disabled }) {
     onChange(next);
   };
 
+  const selectAll = () => !disabled && onChange(new Set(permissions.map((p) => p.id)));
+  const clearAll = () => !disabled && onChange(new Set());
+
+  const total = permissions.length;
+  const count = selected.size;
+
   return (
     <div>
-      <div className="flex items-center justify-between gap-3 mb-2">
-        <div className="relative flex-1">
+      {/* Toolbar: search + running count + master actions */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="relative flex-1 min-w-[180px]">
           <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
             <Icon path={ICONS.search} className="w-4 h-4" width={1.8} />
           </span>
@@ -102,62 +126,117 @@ function PermissionSelector({ permissions, selected, onChange, disabled }) {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <span className="text-xs font-semibold text-gray-500 whitespace-nowrap">
-          {selected.size} selected
+        <span
+          className="text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap"
+          style={{ backgroundColor: TOKENS.LIGHT, color: TOKENS.PRIMARY }}
+        >
+          {count} / {total} selected
         </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={selectAll}
+            disabled={disabled || count === total}
+            className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ color: TOKENS.PRIMARY }}
+          >
+            Select all
+          </button>
+          <button
+            type="button"
+            onClick={clearAll}
+            disabled={disabled || count === 0}
+            className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed text-gray-500"
+          >
+            Clear
+          </button>
+        </div>
       </div>
 
-      <div className="border border-gray-200 rounded-xl max-h-72 overflow-y-auto divide-y divide-gray-100">
+      <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
         {grouped.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-8">No permissions match.</p>
         ) : (
           grouped.map((g) => {
-            const allSelected = g.items.every((p) => selected.has(p.id));
-            const someSelected = g.items.some((p) => selected.has(p.id));
+            const selectedInGroup = g.items.filter((p) => selected.has(p.id)).length;
+            const allSelected = selectedInGroup === g.items.length;
+            const open = isOpen(g.key);
             return (
-              <div key={g.key} className="p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-bold uppercase tracking-wide" style={{ color: TOKENS.NAVY }}>
-                    {g.label}
-                  </p>
+              <div key={g.key} className="rounded-xl border border-gray-200 overflow-hidden">
+                {/* Group header */}
+                <div className="flex items-center bg-gray-50">
+                  <button
+                    type="button"
+                    onClick={() => toggleOpen(g.key)}
+                    className="flex-1 flex items-center gap-2 px-3 py-2.5 text-left"
+                  >
+                    <Icon
+                      path={ICONS.chevron}
+                      className={`w-4 h-4 text-gray-400 transition-transform ${open ? "" : "-rotate-90"}`}
+                      width={2}
+                    />
+                    <span className="text-sm font-semibold" style={{ color: TOKENS.NAVY }}>
+                      {g.label}
+                    </span>
+                    <span
+                      className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+                      style={
+                        selectedInGroup
+                          ? { backgroundColor: TOKENS.LIGHT, color: TOKENS.PRIMARY }
+                          : { backgroundColor: "#e5e7eb", color: "#6b7280" }
+                      }
+                    >
+                      {selectedInGroup}/{g.items.length}
+                    </span>
+                  </button>
                   <button
                     type="button"
                     disabled={disabled}
                     onClick={() => toggleGroup(g.items, allSelected)}
-                    className="text-[11px] font-semibold disabled:opacity-40"
+                    className="px-3 py-2.5 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
                     style={{ color: TOKENS.PRIMARY }}
                   >
-                    {allSelected ? "Clear all" : someSelected ? "Select rest" : "Select all"}
+                    {allSelected ? "Clear" : "Select all"}
                   </button>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {g.items.map((p) => {
-                    const checked = selected.has(p.id);
-                    return (
-                      <label
-                        key={p.id}
-                        className={`flex items-start gap-2 px-2 py-1.5 rounded-lg text-sm ${
-                          disabled ? "opacity-60" : "hover:bg-gray-50 cursor-pointer"
-                        }`}
-                        title={p.name}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
+
+                {/* Group body */}
+                {open && (
+                  <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 border-t border-gray-100">
+                    {g.items.map((p) => {
+                      const checked = selected.has(p.id);
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
                           disabled={disabled}
-                          onChange={() => toggle(p.id)}
-                          className="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
-                        />
-                        <span className="min-w-0">
-                          <span className="block text-gray-700 leading-tight">
-                            {p.description || p.name}
+                          onClick={() => toggle(p.id)}
+                          title={p.name}
+                          className={`flex items-start gap-2.5 text-left px-3 py-2.5 rounded-lg border transition disabled:cursor-not-allowed ${
+                            checked
+                              ? "border-blue-300 bg-blue-50"
+                              : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 border ${
+                              checked ? "border-blue-600" : "border-gray-300 bg-white"
+                            }`}
+                            style={checked ? { backgroundColor: TOKENS.PRIMARY } : undefined}
+                          >
+                            {checked && <Icon path={ICONS.check} className="w-3 h-3" stroke="#fff" width={3} />}
                           </span>
-                          <span className="block text-[11px] text-gray-400 font-mono truncate">{p.name}</span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
+                          <span className="min-w-0">
+                            <span className="block text-sm text-gray-700 leading-tight">
+                              {p.description || p.name}
+                            </span>
+                            <span className="block text-[11px] text-gray-400 font-mono truncate">{p.name}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })
@@ -168,7 +247,11 @@ function PermissionSelector({ permissions, selected, onChange, disabled }) {
 }
 
 // ── Modal shell ─────────────────────────────────────────────────────────────
-function Modal({ title, onClose, children, wide }) {
+// `size` controls the max width: "md" (default forms), "lg", or "xl" (the
+// permission chooser, which needs room for a multi-column grid).
+const MODAL_SIZES = { md: "max-w-md", lg: "max-w-2xl", xl: "max-w-5xl" };
+
+function Modal({ title, onClose, children, size = "md" }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
@@ -177,7 +260,7 @@ function Modal({ title, onClose, children, wide }) {
       onClick={onClose}
     >
       <div
-        className={`relative w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-white rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto`}
+        className={`relative w-full ${MODAL_SIZES[size] || MODAL_SIZES.md} bg-white rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto`}
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -555,7 +638,7 @@ export default function Roles() {
 
       {/* Modals */}
       {modal?.type === "create" && (
-        <Modal title="Add Role" wide onClose={() => setModal(null)}>
+        <Modal title="Add Role" size="xl" onClose={() => setModal(null)}>
           <CreateRoleForm permissions={permissions} onCancel={() => setModal(null)} onSaved={onSaved} />
         </Modal>
       )}
@@ -565,7 +648,7 @@ export default function Roles() {
         </Modal>
       )}
       {modal?.type === "permissions" && (
-        <Modal title={`Permissions — ${modal.role.name}`} wide onClose={() => setModal(null)}>
+        <Modal title={`Permissions — ${modal.role.name}`} size="xl" onClose={() => setModal(null)}>
           <PermissionsForm role={modal.role} permissions={permissions} onCancel={() => setModal(null)} onSaved={onSaved} />
         </Modal>
       )}

@@ -8,6 +8,7 @@ import {
   verifyOtp as verifyOtpRequest,
   registerMember,
 } from "../../services/authService";
+import { isEmailRegistered } from "../../services/memberService";
 
 // =============================================
 // All backend calls go through the shared axios instance (src/services/api.js)
@@ -159,6 +160,24 @@ export default function StudentRegistration() {
       return;
     }
     setEmailError("");
+    // Block re-registration BEFORE sending an OTP: if this email already has an
+    // account, show the "already registered" popup instead of emailing a code.
+    // The lookup reuses the members search (no dedicated backend endpoint); if
+    // it fails we fall through and let verify-otp's account_exists check catch
+    // the duplicate after verification.
+    setOtpSending(true);
+    let registered = false;
+    try {
+      registered = await isEmailRegistered(email);
+    } catch {
+      registered = false;
+    } finally {
+      setOtpSending(false);
+    }
+    if (registered) {
+      setAlreadyRegistered(true);
+      return;
+    }
     const ok = await sendOtp();
     if (!ok) {
       setEmailError("Failed to send OTP. Please try again.");
@@ -411,35 +430,72 @@ export default function StudentRegistration() {
     </div>
   );
 
+  // Dismiss the "already registered" popup and return to the email step so the
+  // user can enter a different address.
+  const closeAlreadyRegistered = () => {
+    setAlreadyRegistered(false);
+    setStep("email");
+    setEmail("");
+    setEmailError("");
+  };
+
   // ══════════════════════════════════════════
-  // ALREADY REGISTERED — block re-registration
+  // ALREADY REGISTERED — popup (blocks re-registration)
+  // Shown before any OTP is sent when the typed email already has an account,
+  // and again as a fallback if verify-otp reports account_exists. It overlays
+  // the current step instead of navigating away, so the user stays put.
   // ══════════════════════════════════════════
-  if (alreadyRegistered) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-100 via-blue-50 to-blue-200 flex flex-col items-center justify-center m-0 px-8 sm:px-12 lg:px-16">
-        <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md text-center">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-amber-50">
-            <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Already Registered</h2>
-          <p className="text-sm text-gray-500 mb-1">This email is already registered</p>
-          <p className="text-sm font-semibold text-blue-700 mb-5">{email}</p>
-          <p className="text-sm text-gray-500 mb-6">
-            You can't register again with this email. Please log in instead.
-          </p>
-          <button
-            onClick={() => navigate("/")}
-            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm transition"
-          >
-            Login with Email OTP
-          </button>
+  const AlreadyRegisteredModal = () => (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="already-registered-title"
+      onClick={closeAlreadyRegistered}
+    >
+      <div
+        className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 text-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={closeAlreadyRegistered}
+          aria-label="Close"
+          className="absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-amber-50">
+          <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
         </div>
-        <Footer />
+        <h2 id="already-registered-title" className="text-xl font-bold text-gray-900 mb-1">Email Already Registered</h2>
+        <p className="text-sm text-gray-500 mb-1">An account already exists for</p>
+        <p className="text-sm font-semibold text-blue-700 mb-5 break-all">{email}</p>
+        <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-4 mb-5">
+          <p className="text-base font-semibold text-amber-700">
+            Please log in instead, or use a different email address to register.
+          </p>
+        </div>
+        <button
+          onClick={() => navigate("/login", { state: { email } })}
+          className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm transition mb-3"
+        >
+          Log In
+        </button>
+        <button
+          onClick={closeAlreadyRegistered}
+          className="w-full text-blue-600 font-semibold text-sm hover:underline"
+        >
+          Use a Different Email
+        </button>
       </div>
-    );
-  }
+    </div>
+  );
 
   // ══════════════════════════════════════════
   // STEP 1 — EMAIL
@@ -511,6 +567,7 @@ export default function StudentRegistration() {
           </div>
         </div>
         <Footer />
+        {alreadyRegistered && <AlreadyRegisteredModal />}
       </AuthShell>
     );
   }
@@ -594,6 +651,7 @@ export default function StudentRegistration() {
           </div>
         </div>
         <Footer />
+        {alreadyRegistered && <AlreadyRegisteredModal />}
       </AuthShell>
     );
   }
@@ -704,11 +762,11 @@ export default function StudentRegistration() {
   // STEP 3 — REGISTRATION (Tab 1: details → Tab 2: summary)
   // ══════════════════════════════════════════
   const inputClass =
-    "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+    "w-full border border-gray-300 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition";
   // Base (border/ring colours omitted) so the error/normal state can supply
   // them without Tailwind class-ordering ambiguity.
   const inputBase =
-    "w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2";
+    "w-full rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 transition";
   // Field className that turns red when the named field has a validation error.
   const fieldClass = (name) =>
     `${inputBase} ${
@@ -721,8 +779,30 @@ export default function StudentRegistration() {
     fieldErrors[name] ? (
       <p className="text-xs text-red-500 mt-1">{fieldErrors[name]}</p>
     ) : null;
-  const labelClass = "block text-sm font-medium text-gray-700 mb-1";
+  const labelClass = "block text-sm font-medium text-gray-600 mb-1.5";
   const required = <span className="text-red-500">*</span>;
+
+  // Shared card wrapper — generous padding + a hairline border so each section
+  // reads as a distinct, breathable block instead of cramped rows.
+  const cardClass =
+    "bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sm:p-6 mb-5";
+
+  // Consistent, visually-distinct section header: a blue accent bar + bold
+  // title, an optional required marker, an optional helper subtitle, and a
+  // hairline divider separating the header from its fields.
+  const SectionHeading = ({ title, subtitle, req }) => (
+    <div className="mb-5 pb-3 border-b border-gray-100">
+      <div className="flex items-center gap-2.5">
+        <span className="w-1 h-5 rounded-full bg-blue-600 flex-shrink-0" />
+        <h2 className="text-[0.9375rem] font-bold text-gray-900">
+          {title} {req && required}
+        </h2>
+      </div>
+      {subtitle && (
+        <p className="text-xs text-gray-400 mt-1.5 ml-3.5">{subtitle}</p>
+      )}
+    </div>
+  );
 
   // Two-step tab indicator shared by both tabs.
   const TabSteps = () => (
@@ -816,13 +896,15 @@ export default function StudentRegistration() {
         {step === "details" && (
           <>
             {/* Profile Photo — at the top of the page */}
-            <div className="bg-white rounded-xl shadow-sm p-4 mb-3">
-              <h2 className="font-bold text-sm mb-2 text-gray-900">
-                Profile Photo {required}
-              </h2>
-              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+            <div className={cardClass}>
+              <SectionHeading
+                title="Profile Photo"
+                req
+                subtitle="Used for your QR membership card · Min 300×300px · Max 2 MB · PNG/JPG"
+              />
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
                 <div
-                  className={`w-24 h-28 rounded-lg overflow-hidden border-2 bg-gray-100 flex items-center justify-center flex-shrink-0 ${
+                  className={`w-28 h-32 rounded-xl overflow-hidden border-2 bg-gray-100 flex items-center justify-center flex-shrink-0 ${
                     photoError ? "border-red-500" : "border-gray-200"
                   }`}
                 >
@@ -834,7 +916,7 @@ export default function StudentRegistration() {
                     />
                   ) : (
                     <svg
-                      className="w-9 h-9 text-gray-300"
+                      className="w-10 h-10 text-gray-300"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -850,15 +932,8 @@ export default function StudentRegistration() {
                 </div>
 
                 <div className="flex flex-col items-start">
-                  <p className="text-xs text-gray-500 mb-2">
-                    Used for your QR membership card.{" "}
-                    <span className="text-gray-300">
-                      Min 300×300px · Max 2 MB · PNG/JPG
-                    </span>
-                  </p>
-
                   <label className="cursor-pointer">
-                    <div className="px-5 py-1.5 rounded-lg border-2 border-gray-300 text-sm font-medium text-gray-700 hover:border-blue-500 hover:text-blue-600 transition text-center">
+                    <div className="px-6 py-2 rounded-lg border-2 border-gray-300 text-sm font-medium text-gray-700 hover:border-blue-500 hover:text-blue-600 transition text-center">
                       Upload Photo
                     </div>
                     <input
@@ -892,15 +967,16 @@ export default function StudentRegistration() {
               </div>
             </div>
 
-            {/* Personal Information */}
-            <div className="bg-white rounded-xl shadow-sm p-4 mb-3">
-              <h2 className="font-bold text-sm mb-3 text-gray-900">
-                Personal Information
-              </h2>
+            {/* Personal Information — identity details */}
+            <div className={cardClass}>
+              <SectionHeading
+                title="Personal Information"
+                subtitle="Your name and identity details."
+              />
 
               {/* 1 col on phones → 3 cols on tablet/desktop. Wide fields
                   span columns so each row stays full and aligned. */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-5">
                 {/* Row 1 — Title · Initials · Last Name */}
                 <div>
                   <label className={labelClass}>Title {required}</label>
@@ -979,19 +1055,7 @@ export default function StudentRegistration() {
                   {fieldError("memberGenderId")}
                 </div>
 
-                {/* Row 3 — Email (2 cols) · Student ID or Guardian ID */}
-                <div className="md:col-span-2">
-                  <label className={labelClass}>
-                    Email Address {required}
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    readOnly
-                    className={`${inputClass} bg-gray-50 text-gray-500 cursor-not-allowed`}
-                  />
-                </div>
-
+                {/* Row 3 — Student NIC · Date of Birth */}
                 <div>
                   <label className={labelClass}>
                     Student NIC <span>or Guardian NIC</span> {required}
@@ -1006,7 +1070,6 @@ export default function StudentRegistration() {
                   {fieldError("studentId")}
                 </div>
 
-                {/* Row 4 — Date of Birth · Primary Phone · Secondary Phone */}
                 <div>
                   <label className={labelClass}>Date of Birth</label>
                   <input
@@ -1016,6 +1079,29 @@ export default function StudentRegistration() {
                     onChange={handleFormChange}
                     max={new Date().toLocaleDateString("en-CA")}
                     className={`${inputClass} text-gray-700`}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Contact Information — how we reach the member */}
+            <div className={cardClass}>
+              <SectionHeading
+                title="Contact Information"
+                subtitle="How we'll reach you."
+              />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-5">
+                {/* Row 1 — Email (2 cols) · Primary Phone */}
+                <div className="md:col-span-2">
+                  <label className={labelClass}>
+                    Email Address {required}
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    readOnly
+                    className={`${inputClass} bg-gray-50 text-gray-500 cursor-not-allowed`}
                   />
                 </div>
 
@@ -1034,6 +1120,7 @@ export default function StudentRegistration() {
                   {fieldError("primaryPhone")}
                 </div>
 
+                {/* Row 2 — Secondary Phone · Address (2 cols) */}
                 <div>
                   <label className={labelClass}>Secondary Phone</label>
                   <input
@@ -1049,8 +1136,7 @@ export default function StudentRegistration() {
                   {fieldError("secondaryPhone")}
                 </div>
 
-                {/* Row 5 — Address (full width) */}
-                <div className="md:col-span-3">
+                <div className="md:col-span-2">
                   <label className={labelClass}>Address {required}</label>
                   <input
                     name="address"
@@ -1065,17 +1151,19 @@ export default function StudentRegistration() {
               </div>
             </div>
 
-            {/* Membership Type */}
-            <div className="bg-white rounded-xl shadow-sm p-4 mb-3">
-              <h2 className="font-bold text-sm mb-2 text-gray-900">
-                Membership Type {required}
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Membership Details — type + (conditional) club selection */}
+            <div className={cardClass}>
+              <SectionHeading
+                title="Membership Details"
+                req
+                subtitle="Choose how you'd like to join."
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <label
-                  className={`flex items-start gap-2.5 p-2.5 rounded-xl border-2 cursor-pointer transition ${
+                  className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition ${
                     membershipType === "club"
                       ? "border-blue-700 bg-blue-50"
-                      : "border-gray-200 bg-white"
+                      : "border-gray-200 bg-white hover:border-gray-300"
                   }`}
                 >
                   <input
@@ -1101,10 +1189,10 @@ export default function StudentRegistration() {
                 </label>
 
                 <label
-                  className={`flex items-start gap-2.5 p-2.5 rounded-xl border-2 cursor-pointer transition ${
+                  className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition ${
                     membershipType === "independent"
                       ? "border-blue-700 bg-blue-50"
-                      : "border-gray-200 bg-white"
+                      : "border-gray-200 bg-white hover:border-gray-300"
                   }`}
                 >
                   <input
@@ -1135,44 +1223,44 @@ export default function StudentRegistration() {
                 </label>
               </div>
               {fieldError("membershipType")}
-            </div>
 
-            {/* Club Selection */}
-            {membershipType === "club" && (
-              <div className="bg-white rounded-xl shadow-sm p-4 mb-3">
-                <h2 className="font-bold text-sm mb-2 text-gray-900">
-                  Club Selection {required}
-                </h2>
-                {clubsError ? (
-                  <p className="text-xs text-red-500">{clubsError}</p>
-                ) : (
-                  <select
-                    value={selectedClub}
-                    onChange={(e) => {
-                      setSelectedClub(e.target.value);
-                      setFieldErrors((fe) =>
-                        fe.club ? { ...fe, club: "" } : fe
-                      );
-                    }}
-                    disabled={clubsLoading}
-                    className={`${fieldClass("club")} md:max-w-sm text-gray-700 disabled:bg-gray-50 disabled:text-gray-500`}
-                  >
-                    <option value="">
-                      {clubsLoading ? "Loading clubs..." : "-- Select a Club --"}
-                    </option>
-                    {clubs.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.club_name}
+              {/* Club Selection — only when registering under a club */}
+              {membershipType === "club" && (
+                <div className="mt-5 pt-5 border-t border-gray-100">
+                  <label className={labelClass}>
+                    Select Your Club {required}
+                  </label>
+                  {clubsError ? (
+                    <p className="text-xs text-red-500">{clubsError}</p>
+                  ) : (
+                    <select
+                      value={selectedClub}
+                      onChange={(e) => {
+                        setSelectedClub(e.target.value);
+                        setFieldErrors((fe) =>
+                          fe.club ? { ...fe, club: "" } : fe
+                        );
+                      }}
+                      disabled={clubsLoading}
+                      className={`${fieldClass("club")} md:max-w-sm text-gray-700 disabled:bg-gray-50 disabled:text-gray-500`}
+                    >
+                      <option value="">
+                        {clubsLoading ? "Loading clubs..." : "-- Select a Club --"}
                       </option>
-                    ))}
-                  </select>
-                )}
-                {fieldError("club")}
-                <p className="text-xs text-gray-500 mt-1.5">
-                  Your registration will be reviewed by the club and admin.
-                </p>
-              </div>
-            )}
+                      {clubs.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.club_name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {fieldError("club")}
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    Your registration will be reviewed by the club and admin.
+                  </p>
+                </div>
+              )}
+            </div>
 
             <div className="flex items-center justify-end gap-3 mb-3">
               {submitError && (

@@ -7,6 +7,7 @@ import {
   sendOtp as sendOtpRequest,
   verifyOtp as verifyOtpRequest,
 } from "../../services/authService";
+import { isEmailRegistered } from "../../services/memberService";
 
 //const SPORTS = ["Cricket","Football","Badminton","Swimming","Athletics","Volleyball","Basketball","Tennis","Rugby","Netball","Table Tennis","Karate"];
 // All years from the current year back to 1950 (descending). The current year
@@ -122,6 +123,24 @@ export default function ClubRegistration() {
       return;
     }
     setEmailError("");
+    // Block re-registration BEFORE sending an OTP: if the responsible-coach
+    // email already has an account, show the "already registered" popup instead
+    // of emailing a code. The lookup reuses the members search (no dedicated
+    // backend endpoint); if it fails we fall through and let verify-otp's
+    // account_exists check catch the duplicate after verification.
+    setOtpSending(true);
+    let registered = false;
+    try {
+      registered = await isEmailRegistered(email);
+    } catch {
+      registered = false;
+    } finally {
+      setOtpSending(false);
+    }
+    if (registered) {
+      setAlreadyRegistered(true);
+      return;
+    }
     const ok = await sendOtp();
     if (!ok) {
       setEmailError("Failed to send OTP. Please try again.");
@@ -480,35 +499,72 @@ export default function ClubRegistration() {
     </div>
   );
 
+  // Dismiss the "already registered" popup and return to the email step so the
+  // user can enter a different address.
+  const closeAlreadyRegistered = () => {
+    setAlreadyRegistered(false);
+    setPhase("email");
+    setEmail("");
+    setEmailError("");
+  };
+
   // ══════════════════════════════════════════════
-  // ALREADY REGISTERED — block re-registration
+  // ALREADY REGISTERED — popup (blocks re-registration)
+  // Shown before any OTP is sent when the typed email already has an account,
+  // and again as a fallback if verify-otp reports account_exists. It overlays
+  // the current step instead of navigating away, so the user stays put.
   // ══════════════════════════════════════════════
-  if (alreadyRegistered) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-100 via-blue-50 to-blue-200 flex flex-col items-center justify-center m-0 px-8 sm:px-12 lg:px-16">
-        <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md text-center">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-amber-50">
-            <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Already Registered</h2>
-          <p className="text-sm text-gray-500 mb-1">This email is already registered</p>
-          <p className="text-sm font-semibold text-blue-700 mb-5">{email}</p>
-          <p className="text-sm text-gray-500 mb-6">
-            You can't register again with this email. Please log in instead.
-          </p>
-          <button
-            onClick={() => navigate("/")}
-            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm transition"
-          >
-            Login with Email OTP
-          </button>
+  const AlreadyRegisteredModal = () => (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="already-registered-title"
+      onClick={closeAlreadyRegistered}
+    >
+      <div
+        className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 text-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={closeAlreadyRegistered}
+          aria-label="Close"
+          className="absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-amber-50">
+          <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
         </div>
-        <Footer />
+        <h2 id="already-registered-title" className="text-xl font-bold text-gray-900 mb-1">Email Already Registered</h2>
+        <p className="text-sm text-gray-500 mb-1">An account already exists for</p>
+        <p className="text-sm font-semibold text-blue-700 mb-5 break-all">{email}</p>
+        <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-4 mb-5">
+          <p className="text-base font-semibold text-amber-700">
+            Please log in instead, or use a different email address to register.
+          </p>
+        </div>
+        <button
+          onClick={() => navigate("/login", { state: { email } })}
+          className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm transition mb-3"
+        >
+          Log In
+        </button>
+        <button
+          onClick={closeAlreadyRegistered}
+          className="w-full text-blue-600 font-semibold text-sm hover:underline"
+        >
+          Use a Different Email
+        </button>
       </div>
-    );
-  }
+    </div>
+  );
 
   // ══════════════════════════════════════════════
   // GATE STEP 1 — EMAIL
@@ -559,6 +615,7 @@ export default function ClubRegistration() {
           </div>
         </div>
         <Footer />
+        {alreadyRegistered && <AlreadyRegisteredModal />}
       </AuthShell>
     );
   }
@@ -620,6 +677,7 @@ export default function ClubRegistration() {
           </div>
         </div>
         <Footer />
+        {alreadyRegistered && <AlreadyRegisteredModal />}
       </AuthShell>
     );
   }
@@ -693,7 +751,7 @@ export default function ClubRegistration() {
   // SUMMARY PANEL (right)
   // ══════════════════════════════════════════════
   const SummaryPanel = ({ twoColumn = false } = {}) => (
-    <div className={twoColumn ? "grid grid-cols-1 lg:grid-cols-2 gap-3 items-start" : "space-y-3"}>
+    <div className={twoColumn ? "grid grid-cols-1 lg:grid-cols-2 gap-5 items-start" : "space-y-3"}>
       {/* Club Info */}
       <div className="bg-white rounded-xl border border-gray-100 p-3">
         <div className="flex items-center justify-between mb-2">
@@ -706,19 +764,22 @@ export default function ClubRegistration() {
             </button>
           )}
         </div>
-        {[
-          ["Club Name", club.name || "—"],
-          ["Register Year", club.year || "—"],
-          ["Register Number", club.registerNumber || "—"],
-          ["Primary Phone", club.primaryPhone || "—"],
-          ["Secondary Phone", club.secondaryPhone || "—"],
-          ["Address", club.address || "—"],
-        ].map(([k, v]) => (
-          <div key={k} className="flex justify-between py-1 border-b border-gray-50 last:border-0">
-            <span className="text-xs text-gray-500">{k}</span>
-            <span className="text-xs font-medium text-gray-700 text-right max-w-32 truncate">{v}</span>
-          </div>
-        ))}
+        <div className={twoColumn ? "grid grid-cols-1 sm:grid-cols-2 gap-x-10" : ""}>
+          {[
+            ["Club Name", club.name || "—"],
+            ["Sport", club.sport || "—"],
+            ["Register Year", club.year || "—"],
+            ["Register Number", club.registerNumber || "—"],
+            ["Primary Phone", club.primaryPhone || "—"],
+            ["Secondary Phone", club.secondaryPhone || "—"],
+            ["Address", club.address || "—"],
+          ].map(([k, v]) => (
+            <div key={k} className="flex justify-between py-1 border-b border-gray-50 last:border-0">
+              <span className="text-xs text-gray-500">{k}</span>
+              <span className="text-xs font-medium text-gray-700 text-right max-w-32 truncate">{v}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Coach List */}
@@ -769,9 +830,10 @@ export default function ClubRegistration() {
               </div>
 
               {/* Coach details grid */}
-              <div className="space-y-1 pl-1">
+              <div className={twoColumn ? "grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 pl-1" : "space-y-1 pl-1"}>
                 {[
                   ["Email", i === 0 ? email : c.email],
+                  ["Gender", genders.find((g) => String(g.category_id) === String(c.memberGenderId))?.description],
                   ["National ID", c.nationalId],
                   ["Primary Phone", c.primaryPhone],
                   ["Secondary Phone", c.secondaryPhone],
@@ -895,6 +957,23 @@ export default function ClubRegistration() {
               <p className="text-xs text-gray-500 mb-4 mt-2">
                 You can reorder coaches by order added. The first coach will be the primary coach.
               </p>
+
+              {/* Pricing notice — simple, user-facing fee explanation. */}
+              <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl p-4 mb-4">
+                <span className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-amber-800">Registration fee</p>
+                  <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+                    The registration fee includes up to <span className="font-semibold">2 coaches</span> for{" "}
+                    <span className="font-semibold">LKR 5,000</span>. Each additional coach is charged{" "}
+                    <span className="font-semibold">LKR 2,500</span>.
+                  </p>
+                </div>
+              </div>
 
               <div className="space-y-4">
                 {coaches.map((coach, idx) => (
@@ -1032,12 +1111,6 @@ export default function ClubRegistration() {
                       </div>
                     </div>
 
-                    {idx === 0 && (
-                      <div className="mt-3 flex items-center gap-1.5">
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">Primary Coach · Verified</span>
-                        <span className="text-xs text-gray-500">Uses your OTP-verified email — already verified.</span>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -1058,7 +1131,7 @@ export default function ClubRegistration() {
 
           {/* ── STEP 3: Summary (centered in main area) ── */}
           {step === 3 && (
-            <div className="max-w-4xl mx-auto">
+            <div className="max-w-7xl mx-auto">
               <h2 className="font-bold text-base mb-1 text-center text-gray-900">Registration Summary</h2>
               <p className="text-xs text-gray-500 mb-4 text-center">Review your details before proceeding.</p>
               <SummaryPanel twoColumn />
@@ -1067,13 +1140,13 @@ export default function ClubRegistration() {
 
           {/* Validation summary for the current step */}
           {navError && step < 3 && (
-            <p className={`text-sm text-red-500 mt-4 ${step === 3 ? "max-w-4xl mx-auto" : ""}`}>
+            <p className={`text-sm text-red-500 mt-4 ${step === 3 ? "max-w-7xl mx-auto" : ""}`}>
               {navError}
             </p>
           )}
 
           {/* Bottom nav */}
-          <div className={`flex items-center justify-between mt-6 ${step === 3 ? "max-w-4xl mx-auto" : ""}`}>
+          <div className={`flex items-center justify-between mt-6 ${step === 3 ? "max-w-7xl mx-auto" : ""}`}>
             <button
               onClick={() => step === 1 ? navigate("/") : setStep(s => s - 1)}
               className="px-5 py-3 border border-gray-300 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition">

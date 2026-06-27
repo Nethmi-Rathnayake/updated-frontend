@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import logo from "../assets/usjp-logo__1_-removebg-preview.png";
 import poolImg from "../assets/swiming pool image.jpg";
+import { sendOtp } from "../services/authService";
+import { isEmailRegistered } from "../services/memberService";
 
 // ── Design tokens (shared across the whole app) ──
 const NAVY = "#0f1c3f";
@@ -134,17 +137,56 @@ const SectionHeading = ({ eyebrow, title, subtitle, light = false }) => (
 );
 
 // Quick-access login card shown in the home hero. It's a lightweight entry point
-// to the email-OTP flow: the user types their email here and we hand off to the
-// full /login flow (carrying the email through router state so EmailStep prefills).
+// to the email-OTP flow: the user types their email here and the OTP is sent
+// straight from this card, then we hand off to the /login OTP-verification step
+// (carrying the email through router state) so the user never has to press
+// "Send OTP" again on the login page.
 const LoginCard = ({ navigate }) => {
   const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  // Set when the typed email has no account — we show a popup right here on the
+  // home page (no redirect) asking the user to register first.
+  const [notRegistered, setNotRegistered] = useState(false);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    navigate("/login", { state: { email: email.trim() } });
+    const target = email.trim();
+    if (!target.includes("@")) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    setError("");
+    setSending(true);
+    try {
+      // Logging in requires an existing account. Check FIRST and, if the email
+      // isn't registered, show the "No Account Found" popup HERE (no OTP sent,
+      // no redirect) prompting the user to register. If the lookup itself fails,
+      // fall through and send anyway — verify-otp still guards the account.
+      let registered = true;
+      try {
+        registered = await isEmailRegistered(target);
+      } catch {
+        registered = true;
+      }
+      if (!registered) {
+        setNotRegistered(true);
+        toast.error("No account found. Please register first.");
+        return;
+      }
+      // Registered — send the OTP here, then jump straight to the OTP step.
+      await sendOtp(target);
+      toast.success("OTP sent successfully!");
+      navigate("/login", { state: { email: target, otpSent: true } });
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to send OTP. Please try again.");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
+    <>
     <div className="bg-white rounded-2xl shadow-2xl p-7">
       {/* USJ Branding — matches the login page (EmailStep) card */}
       <div className="flex items-center gap-3 mb-6">
@@ -159,7 +201,7 @@ const LoginCard = ({ navigate }) => {
         Sign In
       </h2>
       <p className="text-base sm:text-lg text-gray-500 mb-6 leading-relaxed text-center">
-        Already a member? Sign in to your account.
+        <span className="font-bold" style={{ color: BLUE }}>Already registered?</span> Sign in to your account.
       </p>
 
       <form onSubmit={submit}>
@@ -170,18 +212,21 @@ const LoginCard = ({ navigate }) => {
           autoCapitalize="none"
           spellCheck={false}
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => { setEmail(e.target.value); setError(""); }}
           placeholder="yourname@sjp.ac.lk"
-          className="w-full h-12 lg:h-[3.7143rem] border border-gray-300 rounded-lg px-4 text-base lg:text-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4 transition"
+          className={`w-full h-12 lg:h-[3.7143rem] border rounded-lg px-4 text-base lg:text-lg focus:outline-none focus:ring-2 mb-1 transition ${
+            error ? "border-red-400 focus:ring-red-400 bg-red-50" : "border-gray-300 focus:ring-blue-500"
+          }`}
         />
+        {error && <p className="text-red-500 text-sm mb-2">{error}</p>}
         <button
           type="submit"
-          disabled={!email.includes("@")}
-          className="w-full h-12 lg:h-[3.7143rem] text-white font-semibold rounded-lg text-base lg:text-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md active:scale-[0.98]"
+          disabled={sending || !email.includes("@")}
+          className="w-full h-12 lg:h-[3.7143rem] mt-3 text-white font-semibold rounded-lg text-base lg:text-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md active:scale-[0.98]"
           style={{ backgroundColor: BLUE }}
           onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = BLUE_HOVER; }}
           onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = BLUE)}>
-          Sign In with OTP →
+          {sending ? "Sending OTP…" : "Sign In with OTP →"}
         </button>
       </form>
 
@@ -194,6 +239,61 @@ const LoginCard = ({ navigate }) => {
         </p>
       </div>
     </div>
+
+    {/* No Account Found — popup shown on the home page itself (no redirect)
+        when the typed email isn't registered. */}
+    {notRegistered && (
+      <div
+        className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="home-no-account-title"
+        onClick={() => setNotRegistered(false)}
+      >
+        <div
+          className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 text-center"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => setNotRegistered(false)}
+            aria-label="Close"
+            className="absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-amber-50">
+            <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 id="home-no-account-title" className="text-xl font-bold text-gray-900 mb-1">No Account Found</h2>
+          <p className="text-sm text-gray-500 mb-1">No registration exists for</p>
+          <p className="text-sm font-semibold mb-5 break-all" style={{ color: BLUE }}>{email}</p>
+          <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-4 mb-5">
+            <p className="text-base font-semibold text-amber-700">Please register first to sign in.</p>
+          </div>
+          <button
+            onClick={() => navigate("/select-registration", { state: { email: email.trim() } })}
+            className="w-full text-white font-semibold py-3 rounded-lg text-sm transition mb-3"
+            style={{ backgroundColor: BLUE }}
+          >
+            Register Now
+          </button>
+          <button
+            onClick={() => setNotRegistered(false)}
+            className="w-full font-semibold text-sm hover:underline"
+            style={{ color: BLUE }}
+          >
+            Use a Different Email
+          </button>
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 
@@ -415,11 +515,6 @@ function MembershipTab({ navigate }) {
                   boxShadow: p.highlight ? "0 20px 40px -12px rgba(15,28,63,0.45)" : "0 1px 3px rgba(0,0,0,0.08)",
                   transform: p.highlight ? "scale(1.03)" : "none",
                 }}>
-                {p.highlight && (
-                  <span className="absolute top-5 right-5 text-base font-bold px-3 py-1 rounded-full" style={{ backgroundColor: GOLD, color: "#3b2a00" }}>
-                    Most Popular
-                  </span>
-                )}
                 <p className="font-bold text-xl" style={{ color: p.highlight ? "#fff" : NAVY }}>{p.name}</p>
                 <p className="text-base mt-1 mb-5" style={{ color: p.highlight ? "rgba(255,255,255,0.65)" : "#9ca3af" }}>{p.desc}</p>
                 <div className="flex items-end gap-1 mb-6">

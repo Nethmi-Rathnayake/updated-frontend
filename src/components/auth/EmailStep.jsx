@@ -57,7 +57,7 @@ export default function EmailStep({ onSend, beforeSend, initialEmail = "" }) {
         Sign In
       </h2>
       <p className="text-center text-gray-500 text-lg mb-8">
-        Already a member? Sign in to your account.
+        <span className="font-bold text-blue-700">Already registered?</span> Sign in to your account.
       </p>
 
       <form onSubmit={handleSubmit} noValidate>

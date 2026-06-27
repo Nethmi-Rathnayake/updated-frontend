@@ -23,15 +23,18 @@ function rolePlaceholderMessage(role) {
 export default function LoginPage() {
   const location = useLocation();
   // The home-page login card hands off the typed email via router state so the
-  // EmailStep field is prefilled here.
+  // EmailStep field is prefilled here. It may also have already sent the OTP
+  // (`otpSent`) — in which case we open straight on the OTP step so the user
+  // doesn't press "Send OTP" again — or detected an unregistered email
+  // (`notRegistered`), in which case we show the "No Account Found" popup.
   const initialEmail = location.state?.email || "";
-  const [step, setStep] = useState("email");
+  const [step, setStep] = useState(location.state?.otpSent ? "otp" : "email");
   const [email, setEmail] = useState(initialEmail);
   // Placeholder message shown after a registered user verifies their OTP.
   const [loginMessage, setLoginMessage] = useState("");
   // Set when the verified email has no account — we ask them to register
   // instead of logging in.
-  const [notRegistered, setNotRegistered] = useState(false);
+  const [notRegistered, setNotRegistered] = useState(Boolean(location.state?.notRegistered));
   const navigate = useNavigate();
 
   const handleSendOtp = (sentEmail) => {
@@ -229,6 +232,16 @@ export default function LoginPage() {
                 Register here
               </button>
             </p>
+          </div>
+
+          <div className="text-center mt-4">
+            <button onClick={() => navigate("/")}
+              className="inline-flex items-center gap-1.5 text-base text-blue-600 font-semibold hover:underline transition">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              Back to Home
+            </button>
           </div>
         </div>
 
