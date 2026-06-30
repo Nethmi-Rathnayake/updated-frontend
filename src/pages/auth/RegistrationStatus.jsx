@@ -274,7 +274,7 @@ export default function RegistrationStatus() {
       <div className="mx-auto w-full max-w-[1600px]">
         {/* ── Top bar (matches the home page navbar styling) ─────────── */}
         <header
-          className="flex items-center justify-between gap-4 rounded-2xl shadow-sm px-5 sm:px-8 py-4 mb-6"
+          className="flex items-center justify-between gap-4 shadow-sm px-5 sm:px-8 py-4 mb-6"
           style={{ backgroundColor: "rgba(10,20,50,0.97)" }}
         >
           <div className="flex items-center gap-3">

@@ -397,7 +397,7 @@ export default function CoachDashboard() {
 
   const handleLogout = () => {
     sessionStorage.removeItem(STORAGE_KEY);
-    navigate("/login", { replace: true });
+    navigate("/", { replace: true });
   };
 
   // Header refresh — reloads the core datasets plus whatever the active tab

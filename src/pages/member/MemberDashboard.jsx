@@ -8,7 +8,7 @@ import {
   getClub,
   getAttendances,
 } from "../../services/coachService";
-import { getMember, getMemberPayments } from "../../services/memberService";
+import { getMember, getMemberPayments, updateMember } from "../../services/memberService";
 import { storageUrl } from "../../services/api";
 
 // Shared dashboard for the two self-booking member roles:
@@ -63,6 +63,7 @@ const ICONS = {
   payments: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z",
   club: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2M5 21H3m4-14h.01M11 7h.01M15 7h.01M7 11h.01M11 11h.01M15 11h.01M7 15h.01M11 15h.01M15 15h.01",
   profile: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
+  edit: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
   logout: "M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1",
   refresh: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15",
   clock: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
@@ -147,6 +148,74 @@ export default function MemberDashboard({ variant = "independent" }) {
   const [availability, setAvailability] = useState(null);
   const [availLoading, setAvailLoading] = useState(false);
 
+  // Profile editing — members may update their address and phone numbers.
+  // Held at the top level so the inline ProfileView keeps its state across
+  // re-renders. Maps to PUT /api/members/{id} (partial update).
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    primary_phone: "",
+    secondary_phone: "",
+    address: "",
+  });
+  const [profileErrors, setProfileErrors] = useState({});
+
+  // Matches the backend rules: primary must be a mobile (07X XXXXXXX);
+  // secondary is any 9-digit local number (optional).
+  const isValidPrimaryPhone = (p) => /^(?:0|94|\+94)?7\d{8}$/.test(String(p).replace(/\s/g, ""));
+  const isValidSecondaryPhone = (p) => /^(?:0|94|\+94)?\d{9}$/.test(String(p).replace(/\s/g, ""));
+
+  const startEditProfile = () => {
+    setProfileForm({
+      primary_phone: member.primary_phone_number || "",
+      secondary_phone: member.secondary_phone_number || "",
+      address: member.address || "",
+    });
+    setProfileErrors({});
+    setEditingProfile(true);
+  };
+
+  const cancelEditProfile = () => {
+    setEditingProfile(false);
+    setProfileErrors({});
+  };
+
+  const saveProfile = async () => {
+    const errs = {};
+    if (!profileForm.primary_phone.trim()) errs.primary_phone = "Primary phone is required.";
+    else if (!isValidPrimaryPhone(profileForm.primary_phone))
+      errs.primary_phone = "Enter a valid mobile number (e.g. 071 234 5678).";
+    if (profileForm.secondary_phone && !isValidSecondaryPhone(profileForm.secondary_phone))
+      errs.secondary_phone = "Enter a valid phone number or leave it empty.";
+    if (!profileForm.address.trim()) errs.address = "Address is required.";
+    if (Object.keys(errs).length) {
+      setProfileErrors(errs);
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      const fd = new FormData();
+      fd.append("primary_phone", profileForm.primary_phone.trim());
+      fd.append("secondary_phone", profileForm.secondary_phone.trim());
+      fd.append("address", profileForm.address.trim());
+      const updated = await updateMember(member.id, fd);
+      setMember((prev) => {
+        const merged = { ...prev, ...updated };
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        return merged;
+      });
+      setEditingProfile(false);
+      toast.success("Profile updated.");
+    } catch (err) {
+      const data = err?.response?.data;
+      const firstError = data?.errors ? Object.values(data.errors)[0]?.[0] : null;
+      toast.error(firstError || data?.message || "Could not update your details.");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   useEffect(() => {
     if (!member) navigate("/login", { replace: true });
   }, [member, navigate]);
@@ -218,7 +287,7 @@ export default function MemberDashboard({ variant = "independent" }) {
 
   const handleLogout = () => {
     sessionStorage.removeItem(STORAGE_KEY);
-    navigate("/login", { replace: true });
+    navigate("/", { replace: true });
   };
 
   const handleRefresh = useCallback(async () => {
@@ -529,15 +598,37 @@ export default function MemberDashboard({ variant = "independent" }) {
     </div>
   );
 
+  const profileInputCls = (name) =>
+    `w-full rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 transition ${
+      profileErrors[name]
+        ? "border border-red-400 focus:ring-red-400"
+        : "border border-gray-200 focus:ring-blue-500"
+    }`;
+
+  const setProfileField = (name) => (e) => {
+    const { value } = e.target;
+    setProfileForm((f) => ({ ...f, [name]: value }));
+    setProfileErrors((x) => (x[name] ? { ...x, [name]: "" } : x));
+  };
+
   const ProfileView = () => (
     <div className="bg-white rounded-2xl shadow-sm p-6 max-w-2xl">
       <div className="flex items-center gap-4 mb-6">
         <Avatar name={memberName} url={photoUrl} size={72} />
-        <div>
+        <div className="min-w-0">
           <h3 className="font-bold text-lg" style={{ color: NAVY }}>{memberName}</h3>
           <p className="text-sm text-gray-400">{member.member_type || (isClub ? "Club Student" : "Independent")}</p>
         </div>
+        {!editingProfile && (
+          <button
+            onClick={startEditProfile}
+            className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold flex-shrink-0"
+            style={{ backgroundColor: LIGHT, color: PRIMARY }}>
+            <Icon path={ICONS.edit} className="w-4 h-4" stroke={PRIMARY} width={1.8} /> Edit Details
+          </button>
+        )}
       </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
         <InfoRow label="Member ID" value={member.member_id} />
         <InfoRow label="Title" value={member.title} />
@@ -545,13 +636,74 @@ export default function MemberDashboard({ variant = "independent" }) {
         <InfoRow label="Gender" value={member.member_gender} />
         <InfoRow label="NIC / Student ID" value={member.nic_number} />
         <InfoRow label="Date of Birth" value={fmtDate(member.date_of_birth)} />
-        <InfoRow label="Primary Phone" value={member.primary_phone_number} />
-        <InfoRow label="Secondary Phone" value={member.secondary_phone_number} />
-        <InfoRow label="Address" value={member.address} />
         {isClub && <InfoRow label="Club" value={member.club_name || member.requested_club_name} />}
         <InfoRow label="Membership Status" value={<Pill>{member.member_status}</Pill>} />
         <InfoRow label="Payment Status" value={<Pill>{member.payment_status}</Pill>} />
         <InfoRow label="ID Card Status" value={<Pill>{member.card_status}</Pill>} />
+      </div>
+
+      {/* Contact details — editable by the member */}
+      <div className="mt-6 pt-5 border-t border-gray-100">
+        <h4 className="font-bold text-sm mb-4" style={{ color: NAVY }}>Contact Details</h4>
+        {editingProfile ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1.5">Primary Phone</label>
+              <input
+                type="tel"
+                inputMode="tel"
+                value={profileForm.primary_phone}
+                onChange={setProfileField("primary_phone")}
+                placeholder="071 234 5678"
+                className={profileInputCls("primary_phone")}
+              />
+              {profileErrors.primary_phone && <p className="text-xs text-red-500 mt-1">{profileErrors.primary_phone}</p>}
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1.5">Secondary Phone</label>
+              <input
+                type="tel"
+                inputMode="tel"
+                value={profileForm.secondary_phone}
+                onChange={setProfileField("secondary_phone")}
+                placeholder="077 234 5678"
+                className={profileInputCls("secondary_phone")}
+              />
+              {profileErrors.secondary_phone && <p className="text-xs text-red-500 mt-1">{profileErrors.secondary_phone}</p>}
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs text-gray-500 mb-1.5">Address</label>
+              <input
+                value={profileForm.address}
+                onChange={setProfileField("address")}
+                placeholder="No. 1, Main Street, Colombo"
+                className={profileInputCls("address")}
+              />
+              {profileErrors.address && <p className="text-xs text-red-500 mt-1">{profileErrors.address}</p>}
+            </div>
+            <div className="sm:col-span-2 flex items-center gap-3 mt-1">
+              <button
+                onClick={saveProfile}
+                disabled={savingProfile}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition disabled:opacity-60"
+                style={{ backgroundColor: PRIMARY }}>
+                {savingProfile ? "Saving…" : "Save Changes"}
+              </button>
+              <button
+                onClick={cancelEditProfile}
+                disabled={savingProfile}
+                className="px-5 py-2.5 rounded-lg text-sm font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50 transition disabled:opacity-60">
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
+            <InfoRow label="Primary Phone" value={member.primary_phone_number} />
+            <InfoRow label="Secondary Phone" value={member.secondary_phone_number} />
+            <InfoRow label="Address" value={member.address} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -566,13 +718,16 @@ export default function MemberDashboard({ variant = "independent" }) {
         <p className="text-sm text-gray-400">Loading your dashboard…</p>
       </div>
     );
+    // Invoked as plain functions (not <X />) so their JSX is inlined into this
+    // component's tree — editable text inputs (Profile) then keep focus across
+    // re-renders instead of remounting on every keystroke.
     switch (active) {
-      case "book": return <BookFacilityView />;
-      case "attendance": return <AttendanceView />;
-      case "payments": return <PaymentsView />;
-      case "club": return <ClubView />;
-      case "profile": return <ProfileView />;
-      default: return <DashboardView />;
+      case "book": return BookFacilityView();
+      case "attendance": return AttendanceView();
+      case "payments": return PaymentsView();
+      case "club": return ClubView();
+      case "profile": return ProfileView();
+      default: return DashboardView();
     }
   };
 

@@ -282,13 +282,24 @@ export default function StudentRegistration() {
     setPhotoFile(file);
   };
 
-  // Sri Lankan phone validation: 07X XXXXXXX (10 digits starting with 07)
-  const isValidPhone = (phone) => /^0[1-9]\d{8}$/.test(phone.replace(/\s/g, ""));
+  // Sri Lankan phone validation — accepts local (0XX…) or country-code
+  // (+94… / 94…) formats, matching the backend rules. Spaces are ignored.
+  //   primary   → must be a mobile: optional 0/94/+94 prefix + 7 + 8 digits
+  //   secondary → any 9-digit local number with an optional 0/94/+94 prefix
+  const isValidPrimaryPhone = (phone) =>
+    /^(?:\+94|94|0)?7\d{8}$/.test(phone.replace(/\s/g, ""));
+  const isValidSecondaryPhone = (phone) =>
+    /^(?:\+94|94|0)?\d{9}$/.test(phone.replace(/\s/g, ""));
 
   // Initials must be single letters each followed by a dot, e.g. "T.N." or
   // "A.B.C." (spaces between them are tolerated). Rejects "TN", "T.N", "Tharindu".
   const isValidInitials = (value) =>
     /^([A-Za-z]\.\s?)+$/.test(value.trim());
+
+  // NIC (National Identity Card) — matches the backend rule: the old format is
+  // 9 digits followed by V/X, the new format is 12 digits.
+  const isValidNIC = (value) =>
+    /^(?:\d{9}[vVxX]|\d{12})$/.test(value.trim());
 
   // Validate everything collected on Tab 1. Returns a map of
   // field-name → message (empty map means valid). The photo lives outside
@@ -307,11 +318,13 @@ export default function StudentRegistration() {
     if (!form.memberGenderId) errs.memberGenderId = "Please select your gender.";
     if (!form.studentId.trim())
       errs.studentId = "Please enter your NIC (or guardian's NIC).";
+    else if (!isValidNIC(form.studentId))
+      errs.studentId = "Enter a valid NIC — 9 digits + V/X (e.g. 200012345V) or 12 digits.";
     if (!form.primaryPhone.trim())
       errs.primaryPhone = "Please enter your primary phone.";
-    else if (!isValidPhone(form.primaryPhone))
-      errs.primaryPhone = "Enter a valid primary phone number (e.g. 071 234 5678).";
-    if (form.secondaryPhone && !isValidPhone(form.secondaryPhone))
+    else if (!isValidPrimaryPhone(form.primaryPhone))
+      errs.primaryPhone = "Enter a valid phone number (e.g. 0712345678 or +94712345678).";
+    if (form.secondaryPhone && !isValidSecondaryPhone(form.secondaryPhone))
       errs.secondaryPhone = "Enter a valid secondary phone number or leave it empty.";
     if (!form.address.trim()) errs.address = "Please enter your address.";
     if (!membershipType) errs.membershipType = "Please select a membership type.";
@@ -371,8 +384,10 @@ export default function StudentRegistration() {
     // The "Student ID or Guardian ID" input maps to the API's `nic` field.
     if (form.studentId) fd.append("nic", form.studentId);
     if (form.dob) fd.append("dob", form.dob);
-    fd.append("primaryPhone", form.primaryPhone);
-    if (form.secondaryPhone) fd.append("secondaryPhone", form.secondaryPhone);
+    // Strip spaces so a number typed as "+94 71 234 5678" matches the
+    // backend's no-space phone regex.
+    fd.append("primaryPhone", form.primaryPhone.replace(/\s/g, ""));
+    if (form.secondaryPhone) fd.append("secondaryPhone", form.secondaryPhone.replace(/\s/g, ""));
     fd.append("address", form.address);
     fd.append("membershipType", membershipType);
     if (membershipType === "club") fd.append("clubId", selectedClub);
