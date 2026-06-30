@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import logo from "../../assets/usjp-logo__1_-removebg-preview.png";
 import { getMember } from "../../services/memberService";
+import { getClub, getClubMembers } from "../../services/coachService";
 import { storageUrl } from "../../services/api";
+import PaymentMethod from "./PaymentMethod";
 
 // Shown after an ALREADY-REGISTERED member verifies their OTP but has NOT yet
 // paid. They can't enter a dashboard, so we show a READ-ONLY summary of the
@@ -90,6 +92,58 @@ const Field = ({ label, value, wide }) => (
   </div>
 );
 
+// One coach entered on the club registration form. Renders inside the
+// "Coaches" section using the same label/value styling as Field. `isYou`
+// flags the currently signed-in coach.
+const CoachCard = ({ coach, isYou }) => {
+  const cname = buildName(coach.initials, coach.name_denoted_by_initials, coach.lastname);
+  const photo = storageUrl(coach.photo_path) || coach.photo_url || null;
+  const rows = [
+    ["Title", coach.title],
+    ["Gender", coach.member_gender],
+    ["Date of Birth", fmtDate(coach.date_of_birth)],
+    ["NIC", coach.nic_number],
+    ["Email", coach.email],
+    ["Primary Phone", coach.primary_phone_number],
+    ["Secondary Phone", coach.secondary_phone_number],
+  ];
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50/40 p-5">
+      <div className="flex items-start gap-4">
+        <div className="w-16 h-20 rounded-lg overflow-hidden border border-gray-200 bg-gray-100 flex items-center justify-center flex-shrink-0">
+          {photo ? (
+            <img src={photo} alt={cname} className="w-full h-full object-contain" />
+          ) : (
+            <span className="text-[10px] text-gray-300">No photo</span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-bold text-gray-900 break-words">{cname}</p>
+            {coach.member_id && <span className="text-xs text-gray-400">{coach.member_id}</span>}
+            {isYou && (
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">You</span>
+            )}
+            <Pill>{coach.member_status}</Pill>
+          </div>
+          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 mt-3">
+            {rows.map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-xs font-medium text-gray-500">{label}</dt>
+                <dd className="mt-0.5 text-sm text-gray-800 break-words [overflow-wrap:anywhere]">{value || "—"}</dd>
+              </div>
+            ))}
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-medium text-gray-500">Address</dt>
+              <dd className="mt-0.5 text-sm text-gray-800 break-words [overflow-wrap:anywhere]">{coach.address || "—"}</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function RegistrationStatus() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -99,6 +153,13 @@ export default function RegistrationStatus() {
 
   const [member, setMember] = useState(initial);
   const [loading, setLoading] = useState(Boolean(initial?.id));
+  // Club registration details (coaches register a whole club): the club record
+  // and every coach attached to it. Only fetched for coach members.
+  const [club, setClub] = useState(null);
+  const [coaches, setCoaches] = useState([]);
+  const [clubLoading, setClubLoading] = useState(false);
+  // Controls the payment confirmation popup rendered over this page.
+  const [showPayment, setShowPayment] = useState(false);
 
   // No member in state (e.g. page opened directly) → back to login.
   useEffect(() => {
@@ -118,9 +179,43 @@ export default function RegistrationStatus() {
     };
   }, [initial]);
 
+  // Re-pull the member after payment so the workflow tracker / banner flip to
+  // the paid state without a full navigation.
+  const refreshMember = () => {
+    if (!member?.id) return;
+    getMember(member.id)
+      .then((full) => full && setMember((prev) => ({ ...prev, ...full })))
+      .catch(() => {});
+  };
+
   const isClubStudent = String(member?.member_type || "").toLowerCase().includes("club");
+  const isCoach = String(member?.member_type || "").toLowerCase().includes("coach");
   const clubVerified = Boolean(member?.club_id);
   const paid = isPaid(member);
+
+  // For coaches, also load the club they registered plus the full list of
+  // coaches entered on the club registration form, so the whole submission is
+  // visible here (not just this coach's personal details).
+  const clubId = isCoach ? member?.club_id : null;
+  useEffect(() => {
+    if (!clubId) return;
+    let on = true;
+    setClubLoading(true);
+    Promise.all([
+      getClub(clubId).catch(() => null),
+      getClubMembers(clubId).catch(() => []),
+    ])
+      .then(([clubData, members]) => {
+        if (!on) return;
+        if (clubData) setClub(clubData);
+        const list = Array.isArray(members) ? members : [];
+        setCoaches(list.filter((m) => String(m.member_type || "").toLowerCase().includes("coach")));
+      })
+      .finally(() => on && setClubLoading(false));
+    return () => {
+      on = false;
+    };
+  }, [clubId]);
 
   // Workflow tracker — reflects the member's real status.
   const steps = useMemo(() => {
@@ -133,7 +228,7 @@ export default function RegistrationStatus() {
     }
     out.push({
       label: "Payment",
-      state: paid ? "done" : isClubStudent && !clubVerified ? "todo" : "active",
+      state: paid ? "done" : "active",
     });
     return out;
   }, [isClubStudent, clubVerified, paid]);
@@ -164,8 +259,6 @@ export default function RegistrationStatus() {
       : []),
   ];
 
-  const canPay = !(isClubStudent && !clubVerified);
-
   const Loader = ({ label }) => (
     <div className="flex items-center gap-2 py-10 text-sm text-gray-400">
       <svg className="animate-spin w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24">
@@ -179,25 +272,28 @@ export default function RegistrationStatus() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100 m-0 px-4 sm:px-8 lg:px-12 xl:px-16 py-8">
       <div className="mx-auto w-full max-w-[1600px]">
-        {/* ── Top bar ───────────────────────────────────────────────── */}
-        <header className="flex items-center justify-between gap-4 bg-white rounded-2xl shadow-sm border border-gray-100 px-5 sm:px-8 py-4 mb-6">
+        {/* ── Top bar (matches the home page navbar styling) ─────────── */}
+        <header
+          className="flex items-center justify-between gap-4 rounded-2xl shadow-sm px-5 sm:px-8 py-4 mb-6"
+          style={{ backgroundColor: "rgba(10,20,50,0.97)" }}
+        >
           <div className="flex items-center gap-3">
             <img src={logo} alt="USJ Logo" className="w-12 h-12 sm:w-14 sm:h-14 object-contain flex-shrink-0" />
             <div>
-              <p className="font-semibold text-gray-800 text-sm leading-tight whitespace-nowrap">University of Sri Jayewardenepura</p>
-              <p className="text-xs text-blue-600">Sports Facility Portal</p>
+              <p className="font-bold text-white text-sm sm:text-lg leading-tight whitespace-nowrap">University of Sri Jayewardenepura</p>
+              <p className="text-xs sm:text-base leading-tight" style={{ color: "#e8a020" }}>Physical Education Unit</p>
             </div>
           </div>
           <div className="hidden sm:flex items-center gap-3">
             <div className="text-right min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate max-w-[220px]">{name}</p>
-              <p className="text-xs text-gray-500 truncate max-w-[220px]">{member.email || email}</p>
+              <p className="text-sm font-semibold text-white truncate max-w-[220px]">{name}</p>
+              <p className="text-xs truncate max-w-[220px]" style={{ color: "rgba(255,255,255,0.65)" }}>{member.email || email}</p>
             </div>
-            <div className="w-11 h-11 rounded-full overflow-hidden border border-gray-200 bg-gray-100 flex items-center justify-center flex-shrink-0">
+            <div className="w-11 h-11 rounded-full overflow-hidden border border-white/20 bg-white/10 flex items-center justify-center flex-shrink-0">
               {photoUrl ? (
                 <img src={photoUrl} alt={name} className="w-full h-full object-cover" />
               ) : (
-                <span className="text-base font-semibold text-gray-400">{(name[0] || "?").toUpperCase()}</span>
+                <span className="text-base font-semibold text-white/70">{(name[0] || "?").toUpperCase()}</span>
               )}
             </div>
           </div>
@@ -217,9 +313,15 @@ export default function RegistrationStatus() {
                 Welcome back, <span className="font-semibold text-blue-700">{name}</span>. Your registration is
                 submitted but not yet active — complete your payment to activate your membership.
               </p>
-              <div className="flex flex-wrap items-center gap-2 mt-3">
-                <Pill>{member.member_status}</Pill>
-                <Pill>{member.payment_status}</Pill>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-3">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-gray-400">Membership</span>
+                  <Pill>{member.member_status}</Pill>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-gray-400">Payment</span>
+                  <Pill>{member.payment_status}</Pill>
+                </span>
               </div>
             </div>
           </div>
@@ -233,14 +335,27 @@ export default function RegistrationStatus() {
             <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 p-6 lg:p-8 bg-gradient-to-r from-blue-50/70 to-transparent border-b border-gray-100">
               <div className="w-32 h-36 rounded-xl overflow-hidden border-2 border-white shadow-md bg-gray-100 flex items-center justify-center flex-shrink-0">
                 {photoUrl ? (
-                  <img src={photoUrl} alt={name} className="w-full h-full object-cover" />
+                  <img src={photoUrl} alt={name} className="w-full h-full object-contain" />
                 ) : (
                   <span className="text-xs text-gray-300">No photo</span>
                 )}
               </div>
               <div className="text-center sm:text-left min-w-0">
-                <h2 className="text-lg font-bold text-gray-900 break-words">{name}</h2>
-                <p className="text-sm text-gray-500 mt-1">{member.member_id || "—"}</p>
+                {isCoach ? (
+                  <>
+                    <h2 className="text-lg font-bold text-gray-900 break-words">
+                      {member.club_name || club?.club_name || "Your Club"}
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Registered by <span className="font-medium text-gray-700">{name}</span>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-lg font-bold text-gray-900 break-words">{name}</h2>
+                    <p className="text-sm text-gray-500 mt-1">{member.member_id || "—"}</p>
+                  </>
+                )}
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-3">
                   <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full bg-blue-50 text-blue-700">
                     {member.member_type || "Member"}
@@ -261,33 +376,81 @@ export default function RegistrationStatus() {
                 <Loader label="Loading your submitted details…" />
               ) : (
                 <div className="space-y-10">
-                  <Section
-                    title="Personal Information"
-                    icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>}
-                  >
-                    {personal.map(([label, value]) => (
-                      <Field key={label} label={label} value={value} />
-                    ))}
-                  </Section>
+                  {/* For coaches the page is framed around joining / registering a
+                      club: lead with the club itself, then the coaches who make it
+                      up, and only then the signed-in coach's own personal details. */}
+                  {isCoach ? (
+                    <>
+                      {/* Club registration details — coaches register a whole club. */}
+                      <Section
+                        title="Club Information"
+                        icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2M5 21H3m6-14h.01M9 11h.01M9 15h.01M14 7h.01M14 11h.01M14 15h.01" /></svg>}
+                      >
+                        <Field label="Club ID" value={member.club_code || club?.club_id} />
+                        <Field label="Club Name" value={member.club_name || club?.club_name} />
+                        <Field label="Registration No" value={club?.reg_no} />
+                        <Field label="Registration Year" value={club?.reg_year} />
+                        <Field label="Club Status" value={club?.club_status} />
+                        <Field label="Number of Coaches" value={club?.no_of_coaches} />
+                        <Field label="Club Phone (Primary)" value={club?.primary_phone_number} />
+                        <Field label="Club Phone (Secondary)" value={club?.secondary_phone_number} />
+                        <Field label="Club Address" value={club?.address} wide />
+                      </Section>
 
-                  <Section
-                    title="Contact Information"
-                    icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>}
-                  >
-                    {contact.map(([label, value]) => (
-                      <Field key={label} label={label} value={value} />
-                    ))}
-                    <Field label="Address" value={member.address} wide />
-                  </Section>
+                      {/* Every coach entered on the club registration form. */}
+                      <section>
+                        <div className="flex items-center gap-2.5 mb-5">
+                          <span className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                          </span>
+                          <h3 className="text-sm font-bold text-gray-900">
+                            Coaches{coaches.length ? ` (${coaches.length})` : ""}
+                          </h3>
+                        </div>
+                        {clubLoading && coaches.length === 0 ? (
+                          <Loader label="Loading club coaches…" />
+                        ) : coaches.length === 0 ? (
+                          <p className="text-sm text-gray-400">No coach details available.</p>
+                        ) : (
+                          <div className="space-y-4">
+                            {coaches.map((c) => (
+                              <CoachCard key={c.id} coach={c} isYou={c.id === member.id} />
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    </>
+                  ) : (
+                    <>
+                      <Section
+                        title="Personal Information"
+                        icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>}
+                      >
+                        {personal.map(([label, value]) => (
+                          <Field key={label} label={label} value={value} />
+                        ))}
+                      </Section>
 
-                  <Section
-                    title="Membership Information"
-                    icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z" /></svg>}
-                  >
-                    {membership.map(([label, value]) => (
-                      <Field key={label} label={label} value={value} />
-                    ))}
-                  </Section>
+                      <Section
+                        title="Contact Information"
+                        icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>}
+                      >
+                        {contact.map(([label, value]) => (
+                          <Field key={label} label={label} value={value} />
+                        ))}
+                        <Field label="Address" value={member.address} wide />
+                      </Section>
+
+                      <Section
+                        title="Membership Information"
+                        icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z" /></svg>}
+                      >
+                        {membership.map(([label, value]) => (
+                          <Field key={label} label={label} value={value} />
+                        ))}
+                      </Section>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -325,26 +488,18 @@ export default function RegistrationStatus() {
             {/* Next step / actions */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 lg:p-7">
               <h2 className="font-bold text-sm text-gray-900 mb-2">Next Step</h2>
-              {canPay ? (
-                <>
-                  <p className="text-sm text-gray-500 mb-5">
-                    Complete your payment to activate your membership and access the portal.
-                  </p>
-                  <button
-                    onClick={() => navigate("/payment-method", { state: { member, email } })}
-                    className="w-full inline-flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-semibold py-3.5 rounded-xl text-sm transition shadow-sm hover:shadow-md"
-                  >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                    </svg>
-                    Complete Payment Now
-                  </button>
-                </>
-              ) : (
-                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 mb-5">
-                  Your club must verify you before payment is enabled. You'll be notified once approved.
-                </p>
-              )}
+              <p className="text-sm text-gray-500 mb-5">
+                Complete your payment to activate your membership and access the portal.
+              </p>
+              <button
+                onClick={() => setShowPayment(true)}
+                className="w-full inline-flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-semibold py-3.5 rounded-xl text-sm transition shadow-sm hover:shadow-md"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                </svg>
+                Complete Payment Now
+              </button>
               <button
                 onClick={() => navigate("/login", { replace: true })}
                 className="w-full text-sm font-medium text-gray-500 hover:text-blue-600 transition mt-3"
@@ -359,6 +514,16 @@ export default function RegistrationStatus() {
           © {new Date().getFullYear()} University of Sri Jayewardenepura
         </p>
       </div>
+
+      {/* Payment confirmation popup — rendered over this page (blurred behind). */}
+      {showPayment && (
+        <PaymentMethod
+          member={member}
+          email={email}
+          onClose={() => setShowPayment(false)}
+          onSuccess={refreshMember}
+        />
+      )}
     </div>
   );
 }

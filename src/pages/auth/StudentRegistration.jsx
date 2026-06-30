@@ -9,6 +9,7 @@ import {
   registerMember,
 } from "../../services/authService";
 import { isEmailRegistered } from "../../services/memberService";
+import PaymentMethod from "./PaymentMethod";
 
 // =============================================
 // All backend calls go through the shared axios instance (src/services/api.js)
@@ -75,6 +76,10 @@ export default function StudentRegistration() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  // The member created by a successful registration (carries the numeric id +
+  // display name), and whether the "select payment method" popup is open.
+  const [submittedMember, setSubmittedMember] = useState(null);
+  const [showPayment, setShowPayment] = useState(false);
   // Per-field validation messages, keyed by the form field name (plus the
   // pseudo-fields "membershipType" and "club"). A non-empty value drives both
   // the red outline on the field and the inline message rendered beneath it.
@@ -376,7 +381,19 @@ export default function StudentRegistration() {
     setSubmitError("");
     setSubmitting(true);
     try {
-      await registerMember(fd);
+      // The backend returns the new member wrapped in an array
+      // ([{ member_id, payment_id, amount, ... }]); member_id here is the
+      // NUMERIC primary id PaymentMethod needs. Peel any array nesting.
+      let data = await registerMember(fd);
+      while (Array.isArray(data)) data = data[0];
+      setSubmittedMember({
+        id: data?.member_id,
+        member_id: data?.member_code || null,
+        email,
+        initials: form.initials,
+        name_denoted_by_initials: form.nameWithInitials,
+        lastname: form.lastName,
+      });
       setStep("submitted");
     } catch (err) {
       const data = err?.response?.data;
@@ -656,107 +673,9 @@ export default function StudentRegistration() {
     );
   }
 
-  // ══════════════════════════════════════════
-  // STEP 4 — SUBMITTED
-  // ══════════════════════════════════════════
-  if (step === "submitted") {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-100 via-blue-50 to-blue-200 flex flex-col items-center justify-center m-0 px-8 sm:px-12 lg:px-16">
-        <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md text-center">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-blue-50">
-            <svg
-              className="w-8 h-8 text-blue-700"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">
-            Application Submitted!
-          </h2>
-          <p className="text-sm text-gray-500 mb-5">
-            Complete your payment to activate your registration.
-          </p>
-
-          <div className="bg-gray-50 rounded-xl p-4 mb-5 text-left space-y-3">
-            {[
-              { label: "Email verified", done: true, active: false },
-              { label: "Registration form submitted", done: true, active: false },
-              { label: "Payment pending", done: false, active: true },
-            ].map((s, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div
-                  className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{
-                    backgroundColor: s.done
-                      ? "#dcfce7"
-                      : s.active
-                      ? "#fef3c7"
-                      : "#f3f4f6",
-                  }}
-                >
-                  <svg
-                    className="w-3.5 h-3.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    style={{
-                      color: s.done
-                        ? "#16a34a"
-                        : s.active
-                        ? "#d97706"
-                        : "#9ca3af",
-                    }}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={s.done ? 3 : 2}
-                      d={
-                        s.done
-                          ? "M5 13l4 4L19 7"
-                          : s.active
-                          ? "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                          : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                      }
-                    />
-                  </svg>
-                </div>
-                <span
-                  className={`text-xs font-medium ${
-                    s.done || s.active ? "text-gray-700" : "text-gray-500"
-                  }`}
-                >
-                  {s.label}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <button
-            onClick={() => alert("Payment gateway — coming soon!")}
-            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm mb-3 transition"
-          >
-            Proceed to Payment
-          </button>
-          <button
-            onClick={() => navigate("/")}
-            className="w-full text-sm text-gray-500 hover:text-blue-600 transition"
-          >
-            Back to Login
-          </button>
-        </div>
-        <Footer />
-      </div>
-    );
-  }
+  // The STEP 4 — SUBMITTED confirmation is no longer a separate page; it is
+  // rendered as a popup over the summary (see the modal at the end of the main
+  // return below).
 
   // ══════════════════════════════════════════
   // STEP 3 — REGISTRATION (Tab 1: details → Tab 2: summary)
@@ -1277,7 +1196,7 @@ export default function StudentRegistration() {
         )}
 
         {/* ─────────────── TAB 2 — REGISTRATION SUMMARY ─────────────── */}
-        {step === "summary" && (
+        {(step === "summary" || step === "submitted") && (
           <>
             <div className="bg-white rounded-xl shadow-sm p-5 mb-4">
               <h2 className="font-bold text-sm mb-1 text-gray-900">
@@ -1372,6 +1291,103 @@ export default function StudentRegistration() {
 
         <Footer />
       </div>
+
+      {/* ══ STEP 4 — SUBMITTED (popup over the summary) ══ */}
+      {step === "submitted" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 p-8 w-full max-w-md text-center"
+          >
+            <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-blue-50">
+              <svg className="w-8 h-8 text-blue-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Application Submitted!
+            </h2>
+            <p className="text-sm text-gray-500 mb-5">
+              Complete your payment to activate your registration.
+            </p>
+
+            <div className="bg-gray-50 rounded-xl p-4 mb-5 text-left space-y-3">
+              {[
+                { label: "Email verified", done: true, active: false },
+                { label: "Registration form submitted", done: true, active: false },
+                { label: "Payment pending", done: false, active: true },
+              ].map((s, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{
+                      backgroundColor: s.done ? "#dcfce7" : s.active ? "#fef3c7" : "#f3f4f6",
+                    }}
+                  >
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      style={{ color: s.done ? "#16a34a" : s.active ? "#d97706" : "#9ca3af" }}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={s.done ? 3 : 2}
+                        d={
+                          s.done
+                            ? "M5 13l4 4L19 7"
+                            : s.active
+                            ? "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                            : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                        }
+                      />
+                    </svg>
+                  </div>
+                  <span
+                    className={`text-xs font-medium ${
+                      s.done || s.active ? "text-gray-700" : "text-gray-500"
+                    }`}
+                  >
+                    {s.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setShowPayment(true)}
+              disabled={!submittedMember?.id}
+              className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg text-sm mb-3 transition"
+            >
+              Proceed to Payment
+            </button>
+            <button
+              onClick={() => navigate("/")}
+              className="w-full text-sm text-gray-500 hover:text-blue-600 transition"
+            >
+              Back to Login
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Select-payment-method popup — opened by "Proceed to Payment". On a
+          successful payment we send the now-active member to the status page. */}
+      {showPayment && submittedMember?.id && (
+        <PaymentMethod
+          member={submittedMember}
+          email={email}
+          onClose={() => setShowPayment(false)}
+          onSuccess={() =>
+            navigate("/registration-status", {
+              state: { member: submittedMember, email },
+            })
+          }
+        />
+      )}
     </div>
   );
 }

@@ -50,6 +50,13 @@ export const getClub = (clubId) =>
 export const getClubPayments = (clubId) =>
   api.get(`/api/payments`, { params: { club_id: clubId } }).then((r) => r.data);
 
+// POST /api/club-payment/simulate-success/{clubId} → test payment gateway for
+// the CLUB registration fee. Given a club's NUMERIC id, marks the pending club
+// registration-fee payment as completed and activates the club + its coaches.
+// Returns the updated club/payment summary.
+export const simulateClubPaymentSuccess = (clubId) =>
+  api.post(`/api/club-payment/simulate-success/${clubId}`).then((r) => r.data);
+
 // GET /api/attendances?date=… → array of attendance scans. The backend has no
 // club filter, so callers narrow to their club members client-side.
 export const getAttendances = (params = {}) =>

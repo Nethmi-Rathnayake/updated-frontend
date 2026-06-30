@@ -8,6 +8,7 @@ import {
   verifyOtp as verifyOtpRequest,
 } from "../../services/authService";
 import { isEmailRegistered } from "../../services/memberService";
+import PaymentMethod from "./PaymentMethod";
 
 //const SPORTS = ["Cricket","Football","Badminton","Swimming","Athletics","Volleyball","Basketball","Tennis","Rugby","Netball","Table Tennis","Karate"];
 // All years from the current year back to 1950 (descending). The current year
@@ -77,6 +78,10 @@ export default function ClubRegistration() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [submitted, setSubmitted] = useState(false);
+  // The club created by a successful registration (carries the numeric id), and
+  // whether the "select payment method" popup is open.
+  const [registeredClub, setRegisteredClub] = useState(null);
+  const [showPayment, setShowPayment] = useState(false);
 
   // ── Email verification gate (mirrors StudentRegistration) ──
   // phase "email" → "otp" → "wizard". The club details wizard (numeric `step`)
@@ -413,7 +418,16 @@ export default function ClubRegistration() {
     setSubmitError("");
     setSubmitting(true);
     try {
-      await api.post("/api/club-registrations", fd);
+      // The backend returns the new club wrapped in an array
+      // ([{ club_id, club_code, payment_id, ... }]); club_id here is the
+      // NUMERIC primary id PaymentMethod needs. Peel any array nesting.
+      let data = (await api.post("/api/club-registrations", fd))?.data;
+      while (Array.isArray(data)) data = data[0];
+      setRegisteredClub({
+        id: data?.club_id,
+        club_code: data?.club_code || null,
+        club_name: club.name,
+      });
       setSubmitted(true);
     } catch (err) {
       const data = err?.response?.data;
@@ -682,50 +696,8 @@ export default function ClubRegistration() {
     );
   }
 
-  // ══════════════════════════════════════════════
-  // SUBMITTED
-  // ══════════════════════════════════════════════
-  if (submitted) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-100 via-blue-50 to-blue-200 flex flex-col items-center justify-center m-0 px-8 sm:px-12 lg:px-16">
-        <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md text-center">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-blue-50">
-            <svg className="w-8 h-8 text-blue-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">Application Submitted!</h2>
-          <p className="text-sm text-gray-500 mb-5">Complete your payment to activate your club registration.</p>
-          <div className="bg-gray-50 rounded-xl p-4 mb-5 text-left space-y-3">
-            {[
-              { label: "Registration submitted", done: true },
-              { label: "Payment pending", active: true },
-            ].map((s, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: s.done ? "#dcfce7" : s.active ? "#fef3c7" : "#f3f4f6" }}>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    style={{ color: s.done ? "#16a34a" : s.active ? "#d97706" : "#9ca3af" }}>
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={s.done ? 3 : 2}
-                      d={s.done ? "M5 13l4 4L19 7" : s.active ? "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"} />
-                  </svg>
-                </div>
-                <span className={`text-xs font-medium ${s.done || s.active ? "text-gray-700" : "text-gray-500"}`}>{s.label}</span>
-              </div>
-            ))}
-          </div>
-          <button onClick={() => alert("Payment gateway — coming soon!")}
-            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm mb-3 transition">
-            Proceed to Payment
-          </button>
-          <button onClick={() => navigate("/")} className="w-full text-sm text-gray-500 hover:text-blue-600">
-            Back to Login
-          </button>
-        </div>
-        <Footer />
-      </div>
-    );
-  }
+  // The SUBMITTED confirmation is no longer a separate page; it is rendered as a
+  // popup over the summary (see the modal at the end of the main return below).
 
   // ══════════════════════════════════════════════
   // FEE CALCULATION (right panel)
@@ -894,7 +866,7 @@ export default function ClubRegistration() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-blue-100 via-blue-50 to-blue-200 pt-28">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-blue-50 via-white to-blue-100 pt-28">
       <NavBar />
       {/* Cap the content at the same 1600px width as the student form and centre it,
           so it uses the full desktop width but doesn't stretch edge-to-edge on ultrawide. */}
@@ -1177,6 +1149,62 @@ export default function ClubRegistration() {
 
         <Footer />
       </div>
+
+      {/* ══ SUBMITTED (popup over the summary) ══ */}
+      {submitted && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 p-8 w-full max-w-md text-center"
+          >
+            <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-blue-50">
+              <svg className="w-8 h-8 text-blue-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Application Submitted!</h2>
+            <p className="text-sm text-gray-500 mb-5">Complete your payment to activate your club registration.</p>
+            <div className="bg-gray-50 rounded-xl p-4 mb-5 text-left space-y-3">
+              {[
+                { label: "Registration submitted", done: true },
+                { label: "Payment pending", active: true },
+              ].map((s, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: s.done ? "#dcfce7" : s.active ? "#fef3c7" : "#f3f4f6" }}>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                      style={{ color: s.done ? "#16a34a" : s.active ? "#d97706" : "#9ca3af" }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={s.done ? 3 : 2}
+                        d={s.done ? "M5 13l4 4L19 7" : s.active ? "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"} />
+                    </svg>
+                  </div>
+                  <span className={`text-xs font-medium ${s.done || s.active ? "text-gray-700" : "text-gray-500"}`}>{s.label}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setShowPayment(true)}
+              disabled={!registeredClub?.id}
+              className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg text-sm mb-3 transition">
+              Proceed to Payment
+            </button>
+            <button onClick={() => navigate("/")} className="w-full text-sm text-gray-500 hover:text-blue-600">
+              Back to Login
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Select-payment-method popup — opened by "Proceed to Payment". Pays the
+          club-level registration fee, then returns to login on success. */}
+      {showPayment && registeredClub?.id && (
+        <PaymentMethod
+          club={registeredClub}
+          email={email}
+          onClose={() => setShowPayment(false)}
+          onSuccess={() => navigate("/login", { state: { email } })}
+        />
+      )}
     </div>
   );
 }
