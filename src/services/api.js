@@ -28,11 +28,16 @@ const api = axios.create({
 // re-authenticate on the next visit and bounce the user past the login page
 // without entering credentials — admin access must require an explicit login.
 const TOKEN_KEY = "sfmis_admin_token";
+// Member-portal (OTP → Sanctum) token. Kept in a separate key from the admin
+// token: the two are distinct token audiences (a member token can't reach admin
+// routes and vice-versa), and a browser is only ever in one flow at a time.
+const MEMBER_TOKEN_KEY = "sfmis_member_token";
 
 // One-time migration: remove any token left in localStorage by older builds so
 // a stale persisted session can't auto-authenticate.
 try {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(MEMBER_TOKEN_KEY);
 } catch {
   /* storage unavailable — nothing to migrate */
 }
@@ -56,9 +61,42 @@ export const setAdminToken = (token) => {
 
 export const clearAdminToken = () => setAdminToken(null);
 
-// Attach the Bearer token when present.
+// ── Member-portal bearer token ──────────────────────────────────────────────
+// Issued by /verify-otp for an existing member (abilities member/coach). Stored
+// in sessionStorage for the same reason as the admin token: survive an in-tab
+// refresh, but never auto-authenticate across browser sessions.
+export const getMemberToken = () => {
+  try {
+    return sessionStorage.getItem(MEMBER_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+};
+
+export const setMemberToken = (token) => {
+  try {
+    if (token) sessionStorage.setItem(MEMBER_TOKEN_KEY, token);
+    else sessionStorage.removeItem(MEMBER_TOKEN_KEY);
+  } catch {
+    /* storage unavailable (private mode) — token stays in memory only */
+  }
+};
+
+export const clearMemberToken = () => setMemberToken(null);
+
+// Attach the appropriate Bearer token. System routes always use the admin
+// token; member routes prefer the member token; other domain routes use
+// whichever token this browser has (admin OR member — never both at once).
 api.interceptors.request.use((config) => {
-  const token = getAdminToken();
+  const url = config.url || "";
+  const adminToken = getAdminToken();
+  const memberToken = getMemberToken();
+
+  let token;
+  if (url.includes("/system/")) token = adminToken;
+  else if (url.includes("/member/")) token = memberToken || adminToken;
+  else token = adminToken || memberToken;
+
   if (token) {
     config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;
@@ -66,9 +104,11 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// On a 401 from a system route, the token is dead/expired: drop it and bounce
-// to the admin login (unless we're already mid-login, which surfaces its own
-// "invalid credentials" message). Public routes are left untouched.
+// On a 401 the relevant token is dead/expired: drop it and bounce to the right
+// login. System routes → admin login; member-portal routes → member login.
+// Other domain 401s are left alone (some are admin-only endpoints the member
+// portal deliberately can't reach — those degrade gracefully in the UI rather
+// than logging the member out).
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -76,11 +116,17 @@ api.interceptors.response.use(
     const url = error?.config?.url || "";
     const isSystemRoute = url.includes("/api/system/");
     const isLogin = url.includes("/api/system/login");
+    const isMemberRoute = url.includes("/api/member/");
 
     if (status === 401 && isSystemRoute && !isLogin) {
       clearAdminToken();
       if (!window.location.pathname.startsWith("/admin/login")) {
         window.location.assign("/admin/login");
+      }
+    } else if (status === 401 && isMemberRoute) {
+      clearMemberToken();
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.assign("/login");
       }
     }
     return Promise.reject(error);

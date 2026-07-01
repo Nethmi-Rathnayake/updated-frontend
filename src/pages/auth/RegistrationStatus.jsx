@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import logo from "../../assets/usjp-logo__1_-removebg-preview.png";
-import { getMember } from "../../services/memberService";
+import { getMemberMe } from "../../services/authService";
 import { getClub, getClubMembers } from "../../services/coachService";
 import { storageUrl } from "../../services/api";
 import PaymentMethod from "./PaymentMethod";
@@ -170,7 +170,7 @@ export default function RegistrationStatus() {
   useEffect(() => {
     if (!initial?.id) return;
     let on = true;
-    getMember(initial.id)
+    getMemberMe()
       .then((full) => on && full && setMember((prev) => ({ ...prev, ...full })))
       .catch(() => {})
       .finally(() => on && setLoading(false));
@@ -183,7 +183,7 @@ export default function RegistrationStatus() {
   // the paid state without a full navigation.
   const refreshMember = () => {
     if (!member?.id) return;
-    getMember(member.id)
+    getMemberMe()
       .then((full) => full && setMember((prev) => ({ ...prev, ...full })))
       .catch(() => {});
   };

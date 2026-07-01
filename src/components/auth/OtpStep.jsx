@@ -2,19 +2,41 @@ import React, { useState, useRef, useEffect } from "react";
 import toast from "react-hot-toast";
 import { verifyOtp } from "../../services/authService";
 
+// Seconds the "Resend OTP" button stays disabled after each send, so users
+// can't hammer the send-otp endpoint.
+const RESEND_COOLDOWN_SECONDS = 60;
+
 export default function OtpStep({ email, onVerify, onResend }) {
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [timer, setTimer] = useState(165);
+  // Seconds left before "Resend OTP" can be clicked again (starts on mount,
+  // since a code was just sent to reach this step). 0 = enabled.
+  const [resendCooldown, setResendCooldown] = useState(RESEND_COOLDOWN_SECONDS);
   const inputRefs = useRef([]);
-  
+
 
   useEffect(() => {
     if (timer <= 0) return;
     const id = setInterval(() => setTimer((t) => t - 1), 1000);
     return () => clearInterval(id);
   }, [timer]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
+
+  const handleResend = () => {
+    if (resendCooldown > 0) return;
+    setTimer(165);
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
+    setOtp(["", "", "", "", "", ""]);
+    onResend();
+    toast.success("OTP resent successfully!");
+  };
 
   const minutes = String(Math.floor(timer / 60)).padStart(2, "0");
   const seconds = String(timer % 60).padStart(2, "0");
@@ -91,10 +113,10 @@ export default function OtpStep({ email, onVerify, onResend }) {
       <p className="text-base text-gray-500 mb-4">
         Code expires in{" "}
         <span className="text-red-500 font-semibold">{minutes}:{seconds}</span>{" "}
-        <button onClick={() => { setTimer(165); setOtp(["","","","","",""]); onResend();
-        toast.success("OTP resent successfully!"); }}
-          className="text-blue-600 font-semibold hover:underline ml-1">
-          Resend OTP
+        <button onClick={handleResend}
+          disabled={resendCooldown > 0}
+          className="text-blue-600 font-semibold hover:underline ml-1 disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed">
+          {resendCooldown > 0 ? `Resend OTP in ${resendCooldown}s` : "Resend OTP"}
         </button>
       </p>
 

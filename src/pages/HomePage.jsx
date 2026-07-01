@@ -4,7 +4,6 @@ import toast from "react-hot-toast";
 import logo from "../assets/usjp-logo__1_-removebg-preview.png";
 import poolImg from "../assets/swiming pool image.jpg";
 import { sendOtp } from "../services/authService";
-import { isEmailRegistered } from "../services/memberService";
 
 // ── Design tokens (shared across the whole app) ──
 const NAVY = "#0f1c3f";
@@ -159,22 +158,9 @@ const LoginCard = ({ navigate }) => {
     setError("");
     setSending(true);
     try {
-      // Logging in requires an existing account. Check FIRST and, if the email
-      // isn't registered, show the "No Account Found" popup HERE (no OTP sent,
-      // no redirect) prompting the user to register. If the lookup itself fails,
-      // fall through and send anyway — verify-otp still guards the account.
-      let registered = true;
-      try {
-        registered = await isEmailRegistered(target);
-      } catch {
-        registered = true;
-      }
-      if (!registered) {
-        setNotRegistered(true);
-        toast.error("No account found. Please register first.");
-        return;
-      }
-      // Registered — send the OTP here, then jump straight to the OTP step.
+      // Send the OTP, then jump straight to the OTP step on /login. If this email
+      // has no account, verify-otp reports it there (account_exists=false) and
+      // the login page prompts the user to register instead.
       await sendOtp(target);
       toast.success("OTP sent successfully!");
       navigate("/login", { state: { email: target, otpSent: true } });
@@ -327,7 +313,11 @@ function HomeTab({ navigate }) {
       <section className="relative overflow-hidden min-h-[34.2857rem] sm:min-h-[40rem] lg:min-h-[42.8571rem]">
         <img src={poolImg} alt="Swimming Pool" className="absolute inset-0 w-full h-full object-cover" />
         <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, rgba(7,20,45,0.95) 0%, rgba(7,20,45,0.88) 35%, rgba(7,20,45,0.55) 60%, rgba(7,20,45,0.15) 100%)" }} />
-        <div className="relative z-10 max-w-[114.2857rem] mx-auto px-8 sm:px-12 lg:px-16 min-h-[34.2857rem] sm:min-h-[40rem] lg:min-h-[42.8571rem] flex items-center py-24 lg:py-20">
+        {/* Asymmetric vertical padding: the navbar is fixed (h-20) and overlays
+            the hero top, while the features strip only clips the bottom slightly
+            (-mt-8). Extra top padding re-centers the content — and the login
+            card — within the VISIBLE hero area below the navbar. */}
+        <div className="relative z-10 max-w-[114.2857rem] mx-auto px-8 sm:px-12 lg:px-16 min-h-[34.2857rem] sm:min-h-[40rem] lg:min-h-[42.8571rem] flex items-center pt-32 pb-20 lg:pt-28 lg:pb-16">
           <div className="w-full grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
             <div className="max-w-2xl w-full">
               <p className="text-sm sm:text-base font-semibold tracking-widest mb-3" style={{ color: "#60a5fa" }}>WELCOME TO</p>
@@ -340,7 +330,7 @@ function HomeTab({ navigate }) {
             </div>
 
             {/* LOGIN CARD */}
-            <div className="w-full sm:max-w-[30rem] lg:max-w-[35.7143rem] mx-auto lg:mx-0 lg:justify-self-end">
+            <div className="w-full sm:max-w-[27rem] lg:max-w-[30rem] mx-auto lg:mx-0 lg:justify-self-end">
               <LoginCard navigate={navigate} />
             </div>
           </div>

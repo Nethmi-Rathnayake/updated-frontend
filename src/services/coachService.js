@@ -9,16 +9,18 @@ import api from "./api";
 export const getClubVerificationRequests = (coachId) =>
   api.get(`/api/coaches/${coachId}/club-verification-requests`).then((r) => r.data);
 
-// POST /api/club-verification-requests/{memberId}/approve { coach_id }
-export const approveClubRequest = (memberId, coachId) =>
+// POST /api/club-verification-requests/{processId}/approve { coach_id }
+// The route is now keyed by the registration PROCESS id (from a pending
+// request's `process_id`), not the member id. The body still carries coach_id.
+export const approveClubRequest = (processId, coachId) =>
   api
-    .post(`/api/club-verification-requests/${memberId}/approve`, { coach_id: coachId })
+    .post(`/api/club-verification-requests/${processId}/approve`, { coach_id: coachId })
     .then((r) => (Array.isArray(r.data) ? r.data[0] : r.data));
 
-// POST /api/club-verification-requests/{memberId}/reject { coach_id }
-export const rejectClubRequest = (memberId, coachId) =>
+// POST /api/club-verification-requests/{processId}/reject { coach_id }
+export const rejectClubRequest = (processId, coachId) =>
   api
-    .post(`/api/club-verification-requests/${memberId}/reject`, { coach_id: coachId })
+    .post(`/api/club-verification-requests/${processId}/reject`, { coach_id: coachId })
     .then((r) => (Array.isArray(r.data) ? r.data[0] : r.data));
 
 // GET /api/members?club_id=…[&member_type_id=…&…] → array of club members.
@@ -50,12 +52,18 @@ export const getClub = (clubId) =>
 export const getClubPayments = (clubId) =>
   api.get(`/api/payments`, { params: { club_id: clubId } }).then((r) => r.data);
 
-// POST /api/club-payment/simulate-success/{clubId} → test payment gateway for
-// the CLUB registration fee. Given a club's NUMERIC id, marks the pending club
-// registration-fee payment as completed and activates the club + its coaches.
-// Returns the updated club/payment summary.
-export const simulateClubPaymentSuccess = (clubId) =>
-  api.post(`/api/club-payment/simulate-success/${clubId}`).then((r) => r.data);
+// POST /api/club-registration-processes/{processId}/simulate-payment-success →
+// test payment gateway for the CLUB registration fee. Given a club registration
+// PROCESS id, marks its pending registration-fee payment as paid and activates
+// the club + its coaches. Optionally pass the amount paid (defaults server-side
+// to the process's payable amount). Returns the updated process/payment summary.
+export const simulateClubPaymentSuccess = (processId, paidAmount) =>
+  api
+    .post(
+      `/api/club-registration-processes/${processId}/simulate-payment-success`,
+      paidAmount != null ? { paid_amount: paidAmount } : {}
+    )
+    .then((r) => r.data);
 
 // GET /api/attendances?date=… → array of attendance scans. The backend has no
 // club filter, so callers narrow to their club members client-side.

@@ -29,23 +29,16 @@ export const updateMember = (id, formData) => {
 export const getMemberPayments = (payerId) =>
   api.get(`/api/payments`, { params: { payer_id: payerId } }).then((r) => (Array.isArray(r.data) ? r.data : []));
 
-// POST /api/payment/simulate-success/{id} → test payment gateway. Given a
-// member's NUMERIC id, marks the pending registration-fee payment as completed,
-// completes the Payment workflow step, and flips the member to Active once all
-// required steps are done. Returns the updated member/payment summary.
-export const simulatePaymentSuccess = (memberId) =>
-  api.post(`/api/payment/simulate-success/${memberId}`).then((r) => r.data);
-
-// Returns true if a member account exists for this exact email. Used by the
-// login page to decide — BEFORE sending an OTP — whether the person is
-// registered. There is no dedicated "exists" endpoint, so we reuse the members
-// search (LIKE match) and confirm an exact, case-insensitive email match so a
-// partial hit (e.g. "a@b.com" inside "xa@b.com") can't be a false positive.
-export const isEmailRegistered = (email) => {
-  const target = String(email || "").trim().toLowerCase();
-  if (!target) return Promise.resolve(false);
-  return api
-    .get(`/api/members`, { params: { search: target } })
-    .then((r) => (Array.isArray(r.data) ? r.data : []))
-    .then((members) => members.some((m) => String(m.email || "").toLowerCase() === target));
-};
+// POST /api/member-registration-processes/{processId}/simulate-payment-success
+// → test payment gateway. Given a registration PROCESS id, marks its pending
+// registration-fee payment as paid and finalizes the member once all required
+// steps (e.g. club verification) are done. Optionally pass the amount actually
+// paid; it defaults server-side to the process's payable amount. Returns the
+// updated process (+ member, once created).
+export const simulatePaymentSuccess = (processId, paidAmount) =>
+  api
+    .post(
+      `/api/member-registration-processes/${processId}/simulate-payment-success`,
+      paidAmount != null ? { paid_amount: paidAmount } : {}
+    )
+    .then((r) => r.data);

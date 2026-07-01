@@ -8,7 +8,8 @@ import {
   getClub,
   getAttendances,
 } from "../../services/coachService";
-import { getMember, getMemberPayments, updateMember } from "../../services/memberService";
+import { getMemberPayments, updateMember } from "../../services/memberService";
+import { getMemberMe, memberLogout } from "../../services/authService";
 import { storageUrl } from "../../services/api";
 
 // Shared dashboard for the two self-booking member roles:
@@ -220,11 +221,13 @@ export default function MemberDashboard({ variant = "independent" }) {
     if (!member) navigate("/login", { replace: true });
   }, [member, navigate]);
 
-  // The /verify-otp payload omits the photo (and some fields) — enrich once.
+  // The /verify-otp payload omits the photo (and some fields) — enrich once from
+  // the member's own record. /api/member/me works with the member token; the
+  // admin /members/{id} endpoint does not.
   useEffect(() => {
     if (!member?.id || member.photo_path) return;
     let on = true;
-    getMember(member.id)
+    getMemberMe()
       .then((full) => {
         if (on && full) {
           setMember((prev) => {
@@ -241,6 +244,10 @@ export default function MemberDashboard({ variant = "independent" }) {
   }, [member?.id, member?.photo_path]);
 
   // Initial load — facilities, my attendance, my payments, my club (club only).
+  // NOTE: attendance and payments are served only by admin-permission endpoints;
+  // a member token can't reach them, so those settle as empty here (the sections
+  // degrade to their empty state rather than erroring). This needs a member-
+  // facing backend endpoint to populate.
   useEffect(() => {
     if (!member?.id) return;
     let on = true;
@@ -286,6 +293,7 @@ export default function MemberDashboard({ variant = "independent" }) {
   }, [active, selectedFacilityId, bookDate]);
 
   const handleLogout = () => {
+    memberLogout();
     sessionStorage.removeItem(STORAGE_KEY);
     navigate("/", { replace: true });
   };

@@ -1,18 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { getMemberPayments, simulatePaymentSuccess } from "../../services/memberService";
-import { getClubPayments, simulateClubPaymentSuccess } from "../../services/coachService";
+import { simulatePaymentSuccess } from "../../services/memberService";
+import { simulateClubPaymentSuccess } from "../../services/coachService";
 
-// "Select Payment Method" — reached from the "Proceed to Payment" button on the
-// payment-pending summary (RegistrationStatus). The member is carried in via
-// router state ({ member, email }); opening the route directly with no state
-// sends the user back to login.
+// "Select Payment Method" — reached from a "Proceed to Payment" button after
+// registration, or from the login-resume flow. The payee (member OR club) is
+// carried in via props (modal mode) or router state (route mode) and MUST
+// include the registration `process_id` and `payable_amount`; opening the route
+// directly with no payee sends the user back to login.
 //
 // Rendered as a centered confirmation dialog over a blurred overlay. A single
 // payment method (Visa Credit/Debit Card) is pre-selected; the user confirms
 // with "Proceed to Payment", which runs the (test) payment via
-// POST /api/payment/simulate-success/{id} and, on success, returns to the
-// status page where the workflow now shows the payment complete.
+// POST /api/{member|club}-registration-processes/{processId}/simulate-payment-success.
 
 const buildName = (initials, denoted, lastname) => {
   const lead = String(initials || denoted || "").trim();
@@ -49,43 +49,29 @@ export default function PaymentMethod({
   //    navigating on close/success. (kept for backward compatibility; member only)
   const isModal = Boolean(memberProp || clubProp);
   const member = memberProp || location.state?.member || null;
-  const club = clubProp || null;
+  const club = clubProp || location.state?.club || null;
   // Club registration pays a club-level fee; everything else is a member fee.
   const isClub = Boolean(club);
-  const payeeId = member?.id ?? club?.id ?? null;
+  // The registration PROCESS id + payable amount are threaded in from the
+  // registration response (on the member/club object). Payment now targets the
+  // process, and the amount is known up-front — so there's no extra (admin-only)
+  // payments lookup to make here.
+  const processId = member?.process_id ?? club?.process_id ?? null;
   const email = emailProp || location.state?.email || member?.email || "";
 
   // Only one method is offered and it is selected by default.
   const [selected] = useState("card");
-  const [amount, setAmount] = useState(null);
+  const [amount] = useState(() => {
+    const a = member?.payable_amount ?? club?.payable_amount;
+    return a != null ? Number(a) : null;
+  });
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState("");
 
   // Route mode only: page opened directly with no payee → back to login.
   useEffect(() => {
-    if (!isModal && !member) navigate("/login", { replace: true });
-  }, [isModal, member, navigate]);
-
-  // Pull the amount due from the pending payment (member- or club-level) so the
-  // page can show exactly what they're about to pay.
-  useEffect(() => {
-    if (!payeeId) return;
-    let on = true;
-    const fetchPayments = isClub ? getClubPayments(payeeId) : getMemberPayments(payeeId);
-    Promise.resolve(fetchPayments)
-      .then((payments) => {
-        if (!on) return;
-        const list = Array.isArray(payments) ? payments : [];
-        const pending =
-          list.find((p) => !String(p.payment_status || "").toLowerCase().includes("complete")) ||
-          list[0];
-        if (pending?.amount != null) setAmount(Number(pending.amount));
-      })
-      .catch(() => {});
-    return () => {
-      on = false;
-    };
-  }, [payeeId, isClub]);
+    if (!isModal && !member && !club) navigate("/login", { replace: true });
+  }, [isModal, member, club, navigate]);
 
   const name = useMemo(
     () =>
@@ -100,11 +86,15 @@ export default function PaymentMethod({
 
   const handleContinue = async () => {
     if (!selected || paying) return;
+    if (!processId) {
+      setError("Missing registration reference. Please restart your registration.");
+      return;
+    }
     setError("");
     setPaying(true);
     try {
-      if (isClub) await simulateClubPaymentSuccess(payeeId);
-      else await simulatePaymentSuccess(payeeId);
+      if (isClub) await simulateClubPaymentSuccess(processId);
+      else await simulatePaymentSuccess(processId);
       // Payment recorded.
       if (isModal) {
         // Let the host page refresh the member so the workflow shows paid,
@@ -112,12 +102,9 @@ export default function PaymentMethod({
         onSuccess?.();
         onClose?.();
       } else {
-        // Standalone route — return to the status page, which re-fetches the
-        // member and now shows the Payment step complete.
-        navigate("/registration-status", {
-          replace: true,
-          state: { member, email },
-        });
+        // Standalone route (login-resume payment) — the account is finalized
+        // server-side; send them to login to sign in.
+        navigate("/login", { replace: true, state: { email } });
       }
     } catch (err) {
       setError(
@@ -168,7 +155,7 @@ export default function PaymentMethod({
           <p className="text-xs font-medium text-gray-500">Total amount to pay</p>
           <p className="text-3xl font-extrabold text-blue-800 mt-1 tracking-tight">{amountLabel}</p>
           <p className="text-xs text-gray-500 mt-1 truncate">
-            {name} · {(isClub ? club.club_code : member.member_id) || email}
+            {name} · {email}
           </p>
         </div>
 

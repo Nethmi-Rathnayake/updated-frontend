@@ -5,7 +5,6 @@ import EmailStep from "../../components/auth/EmailStep";
 import OtpStep from "../../components/auth/OtpStep";
 import AuthShell from "../../components/auth/AuthShell";
 import { sendOtp } from "../../services/authService";
-import { isEmailRegistered } from "../../services/memberService";
 
 // Map the authenticated user's role (from the /verify-otp "account routing
 // details") to a placeholder message. The real dashboards aren't built yet, so
@@ -49,26 +48,6 @@ export default function LoginPage() {
     setStep("email");
   };
 
-  // Runs when the user clicks "Send OTP" (via EmailStep's beforeSend hook).
-  // Logging in requires an existing account, so we check registration FIRST and
-  // block the OTP for unregistered emails — prompting them to register instead.
-  const handleBeforeSend = async (candidateEmail) => {
-    try {
-      const registered = await isEmailRegistered(candidateEmail);
-      if (!registered) {
-        setEmail(candidateEmail);
-        setNotRegistered(true);
-        toast.error("No account found. Please register to login.");
-        return false; // abort — do not send OTP
-      }
-      return true; // registered — proceed to send OTP
-    } catch {
-      // If the lookup fails (network/server), don't block login — fall through
-      // to the OTP flow, which still verifies the account on the backend.
-      return true;
-    }
-  };
-
   const handleVerify = (data) => {
     // `data` is the /verify-otp response ("account routing details"). Resolve
     // the user's role and whether the email is already registered, tolerating
@@ -90,9 +69,29 @@ export default function LoginPage() {
       data?.is_registered ??
       Boolean(member);
 
-    // Not registered: this email has no account, so they can't log in.
-    // Ask them to register first instead of routing into the dashboards.
+    // Not registered: this email has no account yet.
     if (!registered) {
+      // A pending registration (email verified, payment not completed) has no
+      // account row yet but carries its registration process — send them
+      // straight to the payment page to finish, rather than to "register".
+      const rp = data?.registration_process;
+      if (rp?.process_id) {
+        const payee = {
+          process_id: rp.process_id,
+          payable_amount: rp.payable_amount,
+          club_name: rp.club_name,
+          email,
+        };
+        toast("Resume your registration payment.", { icon: "💳" });
+        navigate("/payment-method", {
+          state:
+            rp.registration_type === "club"
+              ? { club: payee, email }
+              : { member: payee, email },
+        });
+        return;
+      }
+      // Genuinely no account and nothing in progress — prompt to register.
       setNotRegistered(true);
       toast.error("No account found. Please register to login.");
       return;
@@ -213,7 +212,7 @@ export default function LoginPage() {
         {/* Card */}
         <div className="w-full max-w-2xl">
           {step === "email"
-            ? <EmailStep initialEmail={initialEmail} onSend={handleSendOtp} beforeSend={handleBeforeSend} />
+            ? <EmailStep initialEmail={initialEmail} onSend={handleSendOtp} />
             : <OtpStep email={email} onVerify={handleVerify} onResend={() => sendOtp(email)} />
           }
 

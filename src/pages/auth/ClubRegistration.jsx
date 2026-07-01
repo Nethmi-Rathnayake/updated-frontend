@@ -7,7 +7,6 @@ import {
   sendOtp as sendOtpRequest,
   verifyOtp as verifyOtpRequest,
 } from "../../services/authService";
-import { isEmailRegistered } from "../../services/memberService";
 import PaymentMethod from "./PaymentMethod";
 
 //const SPORTS = ["Cricket","Football","Badminton","Swimming","Athletics","Volleyball","Basketball","Tennis","Rugby","Netball","Table Tennis","Karate"];
@@ -19,6 +18,13 @@ const YEARS = Array.from(
   (_, i) => (new Date().getFullYear() - i).toString()
 );
 const TITLE_OPTIONS = ["Mr", "Mrs", "Ms", "Miss", "Dr", "Rev."];
+
+// Accepted profile-photo MIME types (JPG/JPEG share image/jpeg).
+const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+// Seconds the "Resend OTP" button stays disabled after each send, so users
+// can't hammer the send-otp endpoint.
+const RESEND_COOLDOWN_SECONDS = 60;
 
 const STEPS = [
   { num: 1, label: "Club Details", sub: "Basic information" },
@@ -97,6 +103,8 @@ export default function ClubRegistration() {
   // a registered member — such users may not register a club again.
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [timer, setTimer] = useState(165);
+  // Seconds left before "Resend OTP" can be clicked again (0 = enabled).
+  const [resendCooldown, setResendCooldown] = useState(0);
   const inputRefs = useRef([]);
 
   // ── Timer countdown for the OTP screen ──
@@ -105,6 +113,13 @@ export default function ClubRegistration() {
     const id = setInterval(() => setTimer((t) => t - 1), 1000);
     return () => clearInterval(id);
   }, [phase, timer]);
+
+  // ── Resend cooldown countdown ──
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
 
   const minutes = String(Math.floor(timer / 60)).padStart(2, "0");
   const seconds = String(timer % 60).padStart(2, "0");
@@ -128,35 +143,23 @@ export default function ClubRegistration() {
       return;
     }
     setEmailError("");
-    // Block re-registration BEFORE sending an OTP: if the responsible-coach
-    // email already has an account, show the "already registered" popup instead
-    // of emailing a code. The lookup reuses the members search (no dedicated
-    // backend endpoint); if it fails we fall through and let verify-otp's
-    // account_exists check catch the duplicate after verification.
-    setOtpSending(true);
-    let registered = false;
-    try {
-      registered = await isEmailRegistered(email);
-    } catch {
-      registered = false;
-    } finally {
-      setOtpSending(false);
-    }
-    if (registered) {
-      setAlreadyRegistered(true);
-      return;
-    }
+    // Re-registration is caught after verification: verify-otp reports
+    // account_exists, at which point we show the "already registered" popup.
+    // (There is no public pre-send existence check, so we just send the code.)
     const ok = await sendOtp();
     if (!ok) {
       setEmailError("Failed to send OTP. Please try again.");
       return;
     }
     setTimer(165);
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
     setOtp(["", "", "", "", "", ""]);
     setPhase("otp");
   };
 
   const handleResendOtp = async () => {
+    // Ignore clicks while the cooldown is still running or a send is in flight.
+    if (resendCooldown > 0 || otpSending) return;
     setOtp(["", "", "", "", "", ""]);
     setOtpError("");
     const ok = await sendOtp();
@@ -165,6 +168,7 @@ export default function ClubRegistration() {
       return;
     }
     setTimer(165);
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
   };
 
   const handleOtpChange = (index, value) => {
@@ -291,6 +295,12 @@ export default function ClubRegistration() {
 
   const handleCoachPhoto = (id, file) => {
     if (!file) return;
+    // accept="" is only a picker hint — validate the real MIME type so drag-drop
+    // or a renamed non-image file can't slip through.
+    if (!ALLOWED_PHOTO_TYPES.includes(file.type)) {
+      setCoaches((prev) => prev.map(c => c.id === id ? { ...c, photoError: "Use a JPG, PNG, or WebP image", photo: null } : c));
+      return;
+    }
     if (file.size > 1 * 1024 * 1024) {
       setCoaches((prev) => prev.map(c => c.id === id ? { ...c, photoError: "Max 1MB", photo: null } : c));
       return;
@@ -335,7 +345,7 @@ export default function ClubRegistration() {
       if (!c.initials.trim()) e.initials = "Required";
       // Initials must be single letters each followed by a dot, e.g. "N.P."
       else if (!/^([A-Za-z]\.\s?)+$/.test(c.initials.trim()))
-        e.initials = "Use dots between initials, e.g. N.P.";
+        e.initials = "Use a dot after each initial, e.g. N.P.";
       if (!c.nameWithInitials.trim()) e.nameWithInitials = "Required";
       if (!c.lastName.trim()) e.lastName = "Required";
       if (!c.memberGenderId) e.memberGenderId = "Required";
@@ -418,14 +428,16 @@ export default function ClubRegistration() {
     setSubmitError("");
     setSubmitting(true);
     try {
-      // The backend returns the new club wrapped in an array
-      // ([{ club_id, club_code, payment_id, ... }]); club_id here is the
-      // NUMERIC primary id PaymentMethod needs. Peel any array nesting.
+      // Club registration now creates a PROCESS (not a club yet) and returns
+      // { process_id, payable_amount, payment_reference, ... } wrapped in an
+      // array. Peel any array nesting and carry the process details forward so
+      // PaymentMethod can pay against the club registration process.
       let data = (await api.post("/api/club-registrations", fd))?.data;
       while (Array.isArray(data)) data = data[0];
       setRegisteredClub({
-        id: data?.club_id,
-        club_code: data?.club_code || null,
+        process_id: data?.process_id,
+        payable_amount: data?.payable_amount,
+        payment_reference: data?.payment_reference,
         club_name: club.name,
       });
       setSubmitted(true);
@@ -672,9 +684,13 @@ export default function ClubRegistration() {
               ) : (
                 <span className="text-red-500 font-semibold">Code expired.</span>
               )}{" "}
-              <button onClick={handleResendOtp} disabled={otpSending}
-                className="text-blue-600 font-semibold hover:underline ml-1 disabled:opacity-50">
-                {otpSending ? "Sending…" : "Resend OTP"}
+              <button onClick={handleResendOtp} disabled={otpSending || resendCooldown > 0}
+                className="text-blue-600 font-semibold hover:underline ml-1 disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed">
+                {otpSending
+                  ? "Sending…"
+                  : resendCooldown > 0
+                  ? `Resend OTP in ${resendCooldown}s`
+                  : "Resend OTP"}
               </button>
             </p>
 
@@ -984,7 +1000,7 @@ export default function ClubRegistration() {
                           </div>
                           <input
                             ref={el => { coachPhotoRefs.current[coach.id] = el; }}
-                            type="file" accept=".png,.jpg,.jpeg" className="hidden"
+                            type="file" accept=".png,.jpg,.jpeg,.webp" className="hidden"
                             onChange={e => handleCoachPhoto(coach.id, e.target.files[0])} />
                         </label>
                         {coach.photo && (
@@ -1184,7 +1200,7 @@ export default function ClubRegistration() {
               ))}
             </div>
             <button onClick={() => setShowPayment(true)}
-              disabled={!registeredClub?.id}
+              disabled={!registeredClub?.process_id}
               className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg text-sm mb-3 transition">
               Proceed to Payment
             </button>
@@ -1197,7 +1213,7 @@ export default function ClubRegistration() {
 
       {/* Select-payment-method popup — opened by "Proceed to Payment". Pays the
           club-level registration fee, then returns to login on success. */}
-      {showPayment && registeredClub?.id && (
+      {showPayment && registeredClub?.process_id && (
         <PaymentMethod
           club={registeredClub}
           email={email}

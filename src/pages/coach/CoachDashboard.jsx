@@ -14,7 +14,7 @@ import {
   getClubPayments,
   getAttendances,
 } from "../../services/coachService";
-import { getMember } from "../../services/memberService";
+import { getMemberMe, memberLogout } from "../../services/authService";
 import { storageUrl } from "../../services/api";
 
 // ── Design tokens — aligned with the OTP LoginPage palette ──
@@ -203,12 +203,12 @@ export default function CoachDashboard() {
   }, [coach, navigate]);
 
   // The /verify-otp payload omits the photo (and some profile fields), so the
-  // coach's own avatar would be blank. Enrich it once from the full member
-  // record, which includes photo_path.
+  // coach's own avatar would be blank. Enrich it once from the coach's own
+  // record (/api/member/me — works with the member token), which has photo_path.
   useEffect(() => {
     if (!coach?.id || coach.photo_path) return;
     let on = true;
-    getMember(coach.id)
+    getMemberMe()
       .then((full) => {
         if (on && full) {
           setCoach((prev) => {
@@ -281,7 +281,7 @@ export default function CoachDashboard() {
     if (!coach?.id) return;
     setProfileRefreshing(true);
     try {
-      const full = await getMember(coach.id);
+      const full = await getMemberMe();
       if (full) {
         setCoach((prev) => {
           const merged = { ...prev, ...full };
@@ -369,10 +369,12 @@ export default function CoachDashboard() {
     loadCoordinators();
   }, [active, loadCoordinators]);
 
-  const handleApprove = async (memberId) => {
-    setActingId(memberId);
+  // Approve/reject are keyed by the registration PROCESS id (r.process_id), which
+  // is what the backend's verification routes now expect.
+  const handleApprove = async (processId) => {
+    setActingId(processId);
     try {
-      await approveClubRequest(memberId, coach.id);
+      await approveClubRequest(processId, coach.id);
       toast.success("Member approved as a club student.");
       await Promise.all([refreshRequests(), refreshMembers()]);
     } catch (err) {
@@ -382,10 +384,10 @@ export default function CoachDashboard() {
     }
   };
 
-  const handleReject = async (memberId) => {
-    setActingId(memberId);
+  const handleReject = async (processId) => {
+    setActingId(processId);
     try {
-      await rejectClubRequest(memberId, coach.id);
+      await rejectClubRequest(processId, coach.id);
       toast.success("Member rejected and moved to Independent.");
       await Promise.all([refreshRequests(), refreshMembers()]);
     } catch (err) {
@@ -396,6 +398,7 @@ export default function CoachDashboard() {
   };
 
   const handleLogout = () => {
+    memberLogout();
     sessionStorage.removeItem(STORAGE_KEY);
     navigate("/", { replace: true });
   };
@@ -545,27 +548,27 @@ export default function CoachDashboard() {
           {requests.map((r) => {
             const name = buildName(r.initials, r.name_denoted_by_initials, r.lastname);
             return (
-              <div key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-xl border border-gray-100">
+              <div key={r.process_id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-xl border border-gray-100">
                 <Avatar name={name} url={storageUrl(r.photo_path) || r.photo_url} size={44} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold" style={{ color: NAVY }}>{name}</p>
                   <p className="text-xs text-gray-400 break-words">
-                    {r.member_id} · {r.email}{r.nic_number ? ` · NIC ${r.nic_number}` : ""}
+                    {r.email}{r.nic_number ? ` · NIC ${r.nic_number}` : ""}
                   </p>
                   <p className="text-xs text-gray-400">Requested: {r.requested_club_name || coach.club_name}</p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
-                    onClick={() => handleApprove(r.id)}
-                    disabled={actingId === r.id}
+                    onClick={() => handleApprove(r.process_id)}
+                    disabled={actingId === r.process_id}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
                     style={{ backgroundColor: "#16a34a" }}>
                     <Icon path={ICONS.check} className="w-4 h-4" stroke="#fff" width={2.5} />
                     Approve
                   </button>
                   <button
-                    onClick={() => handleReject(r.id)}
-                    disabled={actingId === r.id}
+                    onClick={() => handleReject(r.process_id)}
+                    disabled={actingId === r.process_id}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
                     style={{ backgroundColor: "#fee2e2", color: "#b91c1c" }}>
                     <Icon path={ICONS.x} className="w-4 h-4" stroke="#b91c1c" width={2.5} />
@@ -1150,12 +1153,12 @@ export default function CoachDashboard() {
                         requests.map((r) => {
                           const name = buildName(r.initials, r.name_denoted_by_initials, r.lastname);
                           return (
-                            <div key={r.id} className="px-4 py-3 border-b border-gray-50 last:border-0">
+                            <div key={r.process_id} className="px-4 py-3 border-b border-gray-50 last:border-0">
                               <div className="flex items-center gap-3">
                                 <Avatar name={name} url={storageUrl(r.photo_path) || r.photo_url} size={38} />
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-semibold truncate" style={{ color: NAVY }}>{name}</p>
-                                  <p className="text-xs text-gray-400 truncate">{r.member_id} · {r.email}</p>
+                                  <p className="text-xs text-gray-400 truncate">{r.email}</p>
                                 </div>
                               </div>
                               <p className="text-xs text-gray-400 mt-1 break-words">
@@ -1163,16 +1166,16 @@ export default function CoachDashboard() {
                               </p>
                               <div className="flex items-center gap-2 mt-2">
                                 <button
-                                  onClick={() => handleApprove(r.id)}
-                                  disabled={actingId === r.id}
+                                  onClick={() => handleApprove(r.process_id)}
+                                  disabled={actingId === r.process_id}
                                   className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
                                   style={{ backgroundColor: "#16a34a" }}>
                                   <Icon path={ICONS.check} className="w-3.5 h-3.5" stroke="#fff" width={2.5} />
                                   Approve
                                 </button>
                                 <button
-                                  onClick={() => handleReject(r.id)}
-                                  disabled={actingId === r.id}
+                                  onClick={() => handleReject(r.process_id)}
+                                  disabled={actingId === r.process_id}
                                   className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50"
                                   style={{ backgroundColor: "#fee2e2", color: "#b91c1c" }}>
                                   <Icon path={ICONS.x} className="w-3.5 h-3.5" stroke="#b91c1c" width={2.5} />

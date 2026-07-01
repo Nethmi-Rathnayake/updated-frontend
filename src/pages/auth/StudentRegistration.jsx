@@ -8,7 +8,6 @@ import {
   verifyOtp as verifyOtpRequest,
   registerMember,
 } from "../../services/authService";
-import { isEmailRegistered } from "../../services/memberService";
 import PaymentMethod from "./PaymentMethod";
 
 // =============================================
@@ -23,6 +22,13 @@ import PaymentMethod from "./PaymentMethod";
 //   summary  = Tab 2, read-only review before final submission
 
 const TITLE_OPTIONS = ["Mr", "Mrs", "Ms", "Miss", "Dr", "Rev."];
+
+// Accepted profile-photo MIME types (JPG/JPEG share image/jpeg).
+const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+// Seconds the "Resend OTP" button stays disabled after each send, so users
+// can't hammer the send-otp endpoint.
+const RESEND_COOLDOWN_SECONDS = 60;
 
 export default function StudentRegistration() {
   const navigate = useNavigate();
@@ -43,6 +49,8 @@ export default function StudentRegistration() {
   // member — such users may not register again and are sent back to login.
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [timer, setTimer] = useState(165);
+  // Seconds left before "Resend OTP" can be clicked again (0 = enabled).
+  const [resendCooldown, setResendCooldown] = useState(0);
   const inputRefs = useRef([]);
 
   // ── Clubs ──────────────────────────────────
@@ -107,6 +115,13 @@ export default function StudentRegistration() {
   const minutes = String(Math.floor(timer / 60)).padStart(2, "0");
   const seconds = String(timer % 60).padStart(2, "0");
 
+  // ── Resend cooldown countdown ──────────────
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
+
   // ── Load clubs + genders once we reach the details tab ──
   useEffect(() => {
     if (step !== "details") return;
@@ -165,35 +180,23 @@ export default function StudentRegistration() {
       return;
     }
     setEmailError("");
-    // Block re-registration BEFORE sending an OTP: if this email already has an
-    // account, show the "already registered" popup instead of emailing a code.
-    // The lookup reuses the members search (no dedicated backend endpoint); if
-    // it fails we fall through and let verify-otp's account_exists check catch
-    // the duplicate after verification.
-    setOtpSending(true);
-    let registered = false;
-    try {
-      registered = await isEmailRegistered(email);
-    } catch {
-      registered = false;
-    } finally {
-      setOtpSending(false);
-    }
-    if (registered) {
-      setAlreadyRegistered(true);
-      return;
-    }
+    // Re-registration is caught after verification: verify-otp reports
+    // account_exists, at which point we show the "already registered" popup.
+    // (There is no public pre-send existence check, so we just send the code.)
     const ok = await sendOtp();
     if (!ok) {
       setEmailError("Failed to send OTP. Please try again.");
       return;
     }
     setTimer(165);
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
     setOtp(["", "", "", "", "", ""]);
     setStep("otp");
   };
 
   const handleResendOtp = async () => {
+    // Ignore clicks while the cooldown is still running or a send is in flight.
+    if (resendCooldown > 0 || otpSending) return;
     setOtp(["", "", "", "", "", ""]);
     setOtpError("");
     const ok = await sendOtp();
@@ -202,6 +205,7 @@ export default function StudentRegistration() {
       return;
     }
     setTimer(165);
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
   };
 
   const handleOtpChange = (index, value) => {
@@ -272,6 +276,14 @@ export default function StudentRegistration() {
   const handlePhotoChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    // The accept="" attribute is only a picker hint — drag-drop, the "All files"
+    // option, or a renamed extension can still hand us a non-image. Validate the
+    // real MIME type so only actual images are accepted.
+    if (!ALLOWED_PHOTO_TYPES.includes(file.type)) {
+      setPhotoError("Photo must be a JPG, PNG, or WebP image.");
+      setPhotoFile(null);
+      return;
+    }
     if (file.size > 2 * 1024 * 1024) {
       setPhotoError("Photo must be less than 2MB.");
       setPhotoFile(null);
@@ -311,7 +323,7 @@ export default function StudentRegistration() {
     if (!form.title) errs.title = "Please select a title.";
     if (!form.initials.trim()) errs.initials = "Please enter your initials.";
     else if (!isValidInitials(form.initials))
-      errs.initials = "Use dots between initials, e.g. T.N. or A.B.C.";
+      errs.initials = "Use a dot after each initial, e.g. T.N. or A.B.C.";
     if (!form.nameWithInitials.trim())
       errs.nameWithInitials = "Please enter the name denoted by your initials.";
     if (!form.lastName.trim()) errs.lastName = "Please enter your last name.";
@@ -326,6 +338,7 @@ export default function StudentRegistration() {
       errs.primaryPhone = "Enter a valid phone number (e.g. 0712345678 or +94712345678).";
     if (form.secondaryPhone && !isValidSecondaryPhone(form.secondaryPhone))
       errs.secondaryPhone = "Enter a valid secondary phone number or leave it empty.";
+    if (!form.dob) errs.dob = "Please enter your date of birth.";
     if (!form.address.trim()) errs.address = "Please enter your address.";
     if (!membershipType) errs.membershipType = "Please select a membership type.";
     if (membershipType === "club" && !selectedClub)
@@ -396,14 +409,16 @@ export default function StudentRegistration() {
     setSubmitError("");
     setSubmitting(true);
     try {
-      // The backend returns the new member wrapped in an array
-      // ([{ member_id, payment_id, amount, ... }]); member_id here is the
-      // NUMERIC primary id PaymentMethod needs. Peel any array nesting.
+      // Registration now creates a PROCESS (not a member yet) and returns
+      // { process_id, payable_amount, payment_reference, ... } wrapped in an
+      // array. Peel any array nesting and carry the process details forward so
+      // PaymentMethod can pay against the process.
       let data = await registerMember(fd);
       while (Array.isArray(data)) data = data[0];
       setSubmittedMember({
-        id: data?.member_id,
-        member_id: data?.member_code || null,
+        process_id: data?.process_id,
+        payable_amount: data?.payable_amount,
+        payment_reference: data?.payment_reference,
         email,
         initials: form.initials,
         name_denoted_by_initials: form.nameWithInitials,
@@ -659,10 +674,14 @@ export default function StudentRegistration() {
               )}{" "}
               <button
                 onClick={handleResendOtp}
-                disabled={otpSending}
-                className="text-blue-600 font-semibold hover:underline ml-1 disabled:opacity-50"
+                disabled={otpSending || resendCooldown > 0}
+                className="text-blue-600 font-semibold hover:underline ml-1 disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
               >
-                {otpSending ? "Sending…" : "Resend OTP"}
+                {otpSending
+                  ? "Sending…"
+                  : resendCooldown > 0
+                  ? `Resend OTP in ${resendCooldown}s`
+                  : "Resend OTP"}
               </button>
             </p>
 
@@ -1005,15 +1024,16 @@ export default function StudentRegistration() {
                 </div>
 
                 <div>
-                  <label className={labelClass}>Date of Birth</label>
+                  <label className={labelClass}>Date of Birth {required}</label>
                   <input
                     type="date"
                     name="dob"
                     value={form.dob}
                     onChange={handleFormChange}
                     max={new Date().toLocaleDateString("en-CA")}
-                    className={`${inputClass} text-gray-700`}
+                    className={`${fieldClass("dob")} text-gray-700`}
                   />
+                  {fieldError("dob")}
                 </div>
               </div>
             </div>
@@ -1374,7 +1394,7 @@ export default function StudentRegistration() {
 
             <button
               onClick={() => setShowPayment(true)}
-              disabled={!submittedMember?.id}
+              disabled={!submittedMember?.process_id}
               className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg text-sm mb-3 transition"
             >
               Proceed to Payment
@@ -1391,15 +1411,15 @@ export default function StudentRegistration() {
 
       {/* Select-payment-method popup — opened by "Proceed to Payment". On a
           successful payment we send the now-active member to the status page. */}
-      {showPayment && submittedMember?.id && (
+      {showPayment && submittedMember?.process_id && (
         <PaymentMethod
           member={submittedMember}
           email={email}
           onClose={() => setShowPayment(false)}
           onSuccess={() =>
-            navigate("/registration-status", {
-              state: { member: submittedMember, email },
-            })
+            // Payment done. The member account is finalized server-side (once any
+            // club verification clears); send them to login to sign in with OTP.
+            navigate("/login", { state: { email } })
           }
         />
       )}
