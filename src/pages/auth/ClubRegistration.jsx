@@ -27,6 +27,29 @@ const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
 // can't hammer the send-otp endpoint.
 const RESEND_COOLDOWN_SECONDS = 60;
 
+// Maps the backend club validator's field names (from the /preview response's
+// `errors`) onto this form's fields. Coach errors arrive as dot paths
+// (coaches.0.email, coach_photos.1) and are parsed separately.
+const CLUB_FIELD_MAP = {
+  club_name: "name",
+  reg_no: "registerNumber",
+  primary_phone_number: "primaryPhone",
+  address: "address",
+};
+const COACH_FIELD_MAP = {
+  title: "title",
+  initials: "initials",
+  name_denoted_by_initials: "nameWithInitials",
+  lastname: "lastName",
+  member_gender_id: "memberGenderId",
+  email: "email",
+  nic: "nationalId",
+  primary_phone: "primaryPhone",
+  secondary_phone: "secondaryPhone",
+  date_of_birth: "dob",
+  address: "address",
+};
+
 const STEPS = [
   { num: 1, label: "Club Details", sub: "Basic information" },
   { num: 2, label: "Coach Details", sub: "Add coaches" },
@@ -282,6 +305,8 @@ export default function ClubRegistration() {
 
   // Submit state for POST /api/club-registrations
   const [submitting, setSubmitting] = useState(false);
+  // True while the backend /preview validation runs (the step 2 → summary "Next").
+  const [validating, setValidating] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
   // Live fee preview — POST /api/club-registration-fee-preview { coach_count }.
@@ -398,34 +423,9 @@ export default function ClubRegistration() {
     return Object.keys(errs).length === 0;
   };
 
-  const handleNext = () => {
-    if (step === 1 && !validateClub()) {
-      setNavError("Please correct the highlighted fields below.");
-      return;
-    }
-    if (step === 2 && !validateCoaches()) {
-      setNavError("Please correct the highlighted coach fields below.");
-      return;
-    }
-    setNavError("");
-    setStep(s => s + 1);
-  };
-
-  const handleSubmit = async () => {
-    // Only the primary coach (index 0) must have a photo; additional coaches
-    // are optional. The backend requires coach_photos[0].
-    if (!coaches[0]?.photo) {
-      setSubmitError("A profile photo is required for the primary coach.");
-      return;
-    }
-
-    // =============================================
-    // API CALL — POST /api/club-registrations (multipart/form-data).
-    // Documented fields (live OpenAPI): clubName, regNo, primaryPhoneNumber,
-    // address, coaches (JSON string array), coach_photos[] (files, same order
-    // as the coaches array). Gated by the OTP-verified session cookie, which
-    // `api` carries via withCredentials.
-    // =============================================
+  // Builds the multipart payload sent to both /preview (step 2 → summary) and
+  // the final /club-registrations submit, so what's validated equals what's stored.
+  const buildClubFormData = () => {
     const fd = new FormData();
     fd.append("email", email);
     fd.append("clubName", club.name);
@@ -458,6 +458,100 @@ export default function ClubRegistration() {
     coaches.forEach((c, i) => {
       if (c.photo) fd.append(`coach_photos[${i}]`, c.photo);
     });
+    return fd;
+  };
+
+  // Pushes a backend 422 `errors` map onto the form. Club-level keys go to
+  // `clubErrors` (step 1); coach dot-paths (coaches.{i}.{field}, coach_photos.{i})
+  // go to the matching coach in `coachErrors` (step 2). The user is sent to the
+  // earliest step that has an error; anything unmapped shows in the nav line.
+  const applyBackendErrors = (errors, fallback) => {
+    const clubErrs = {};
+    const coachErrs = {};
+    const general = [];
+    Object.entries(errors || {}).forEach(([key, msgs]) => {
+      const msg = Array.isArray(msgs) ? msgs[0] : String(msgs);
+      let m;
+      if ((m = key.match(/^coaches\.(\d+)\.(.+)$/))) {
+        const coach = coaches[Number(m[1])];
+        const field = COACH_FIELD_MAP[m[2]];
+        if (coach && field) coachErrs[coach.id] = { ...(coachErrs[coach.id] || {}), [field]: msg };
+        else general.push(msg);
+      } else if ((m = key.match(/^coach_photos\.(\d+)$/))) {
+        const coach = coaches[Number(m[1])];
+        if (coach) coachErrs[coach.id] = { ...(coachErrs[coach.id] || {}), photo: msg };
+        else general.push(msg);
+      } else if (CLUB_FIELD_MAP[key]) {
+        clubErrs[CLUB_FIELD_MAP[key]] = msg;
+      } else {
+        general.push(msg);
+      }
+    });
+    const hasClub = Object.keys(clubErrs).length > 0;
+    const hasCoach = Object.keys(coachErrs).length > 0;
+    if (hasClub) setClubErrors((prev) => ({ ...prev, ...clubErrs }));
+    if (hasCoach) {
+      setCoachErrors((prev) => {
+        const next = { ...prev };
+        Object.entries(coachErrs).forEach(([id, fields]) => {
+          next[id] = { ...(next[id] || {}), ...fields };
+        });
+        return next;
+      });
+    }
+    if (hasClub) setStep(1);
+    else if (hasCoach) setStep(2);
+    setNavError(general[0] || fallback || "Please correct the highlighted fields.");
+  };
+
+  const handleNext = async () => {
+    if (step === 1 && !validateClub()) {
+      setNavError("Please correct the highlighted fields below.");
+      return;
+    }
+    if (step === 2 && !validateCoaches()) {
+      setNavError("Please correct the highlighted coach fields below.");
+      return;
+    }
+    // Backend validation before the summary (step 2 → 3): send the full club +
+    // coaches payload to /preview and block the summary if the server rejects it.
+    if (step === 2) {
+      if (validating) return;
+      setNavError("");
+      setValidating(true);
+      let ok = false;
+      try {
+        await api.post("/api/club-registrations/preview", buildClubFormData());
+        ok = true;
+      } catch (err) {
+        const data = err?.response?.data;
+        if (data?.errors) applyBackendErrors(data.errors, data.message);
+        else setNavError(data?.message || "We couldn't validate your details. Please try again.");
+      } finally {
+        setValidating(false);
+      }
+      if (!ok) return;
+    }
+    setNavError("");
+    setStep(s => s + 1);
+  };
+
+  const handleSubmit = async () => {
+    // Only the primary coach (index 0) must have a photo; additional coaches
+    // are optional. The backend requires coach_photos[0].
+    if (!coaches[0]?.photo) {
+      setSubmitError("A profile photo is required for the primary coach.");
+      return;
+    }
+
+    // =============================================
+    // API CALL — POST /api/club-registrations (multipart/form-data).
+    // Documented fields (live OpenAPI): clubName, regNo, primaryPhoneNumber,
+    // address, coaches (JSON string array), coach_photos[] (files, same order
+    // as the coaches array). Gated by the OTP-verified session cookie, which
+    // `api` carries via withCredentials.
+    // =============================================
+    const fd = buildClubFormData();
 
     setSubmitError("");
     setSubmitting(true);
@@ -1174,11 +1268,14 @@ export default function ClubRegistration() {
             </button>
             {step < 3 && (
               <button onClick={handleNext}
-                className="px-6 py-3 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-sm font-semibold transition flex items-center gap-2">
-                {step === 2 ? "Next: Review Summary" : "Next"}
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                </svg>
+                disabled={validating}
+                className="px-6 py-3 bg-blue-700 hover:bg-blue-800 disabled:bg-blue-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition flex items-center gap-2">
+                {validating ? "Validating…" : (step === 2 ? "Next: Review Summary" : "Next")}
+                {!validating && (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  </svg>
+                )}
               </button>
             )}
           </div>

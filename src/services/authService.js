@@ -45,3 +45,10 @@ export const memberLogout = () =>
 // boundary automatically; setting it by hand can drop the boundary.
 export const registerMember = (formData) =>
   api.post("/api/member-registrations", formData).then((res) => res.data);
+
+// Server-side validation used BEFORE the summary step. Same multipart payload as
+// registerMember, but the backend only validates (no insert): resolves with
+// { valid, data } on success, or rejects with 422 { message, errors } that the
+// form maps back onto its fields.
+export const previewMemberRegistration = (formData) =>
+  api.post("/api/member-registrations/preview", formData).then((res) => res.data);

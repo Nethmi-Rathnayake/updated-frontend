@@ -7,6 +7,7 @@ import {
   sendOtp as sendOtpRequest,
   verifyOtp as verifyOtpRequest,
   registerMember,
+  previewMemberRegistration,
   checkMember,
 } from "../../services/authService";
 import PaymentMethod from "./PaymentMethod";
@@ -30,6 +31,25 @@ const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
 // Seconds the "Resend OTP" button stays disabled after each send, so users
 // can't hammer the send-otp endpoint.
 const RESEND_COOLDOWN_SECONDS = 60;
+
+// Maps the backend validator's field names (from the /preview response's
+// `errors` object) onto this form's field keys, so server-side messages land on
+// the same inputs the client-side rules use.
+const BACKEND_FIELD_MAP = {
+  title: "title",
+  initials: "initials",
+  name_denoted_by_initials: "nameWithInitials",
+  lastname: "lastName",
+  member_gender_id: "memberGenderId",
+  nic: "studentId",
+  primary_phone: "primaryPhone",
+  secondary_phone: "secondaryPhone",
+  date_of_birth: "dob",
+  address: "address",
+  membership_type: "membershipType",
+  club_id: "club",
+  photo: "photo",
+};
 
 export default function StudentRegistration() {
   const navigate = useNavigate();
@@ -84,6 +104,8 @@ export default function StudentRegistration() {
     address: "",
   });
   const [submitting, setSubmitting] = useState(false);
+  // True while the backend /preview validation is in flight (the "Next" step).
+  const [validating, setValidating] = useState(false);
   const [submitError, setSubmitError] = useState("");
   // The member created by a successful registration (carries the numeric id +
   // display name), and whether the "select payment method" popup is open.
@@ -367,11 +389,65 @@ export default function StudentRegistration() {
     return valid;
   };
 
-  // Tab 1 → Tab 2. Block on validation so the summary only ever shows
-  // data the backend will accept.
-  const handleNext = () => {
+  // Builds the multipart payload sent to both /preview (Next) and the final
+  // /member-registrations submit, so the data validated is exactly what's stored.
+  const buildRegistrationFormData = () => {
+    const fd = new FormData();
+    fd.append("email", email);
+    fd.append("title", form.title);
+    fd.append("initials", form.initials);
+    fd.append("nameWithInitials", form.nameWithInitials);
+    fd.append("lastName", form.lastName);
+    fd.append("memberGenderId", form.memberGenderId);
+    // The "Student ID or Guardian ID" input maps to the API's `nic` field.
+    if (form.studentId) fd.append("nic", form.studentId);
+    if (form.dob) fd.append("dob", form.dob);
+    // Strip spaces so a number typed as "+94 71 234 5678" matches the
+    // backend's no-space phone regex.
+    fd.append("primaryPhone", form.primaryPhone.replace(/\s/g, ""));
+    if (form.secondaryPhone) fd.append("secondaryPhone", form.secondaryPhone.replace(/\s/g, ""));
+    fd.append("address", form.address);
+    fd.append("membershipType", membershipType);
+    if (membershipType === "club") fd.append("clubId", selectedClub);
+    fd.append("photo", photoFile);
+    return fd;
+  };
+
+  // Pushes a backend 422 `errors` map onto the form: known fields get their
+  // outline/inline message via `fieldErrors` (photo mirrored into `photoError`),
+  // and anything without a matching field (e.g. the email uniqueness rule) is
+  // surfaced in the summary line above the action button.
+  const applyBackendErrors = (errors, fallback) => {
+    const mapped = {};
+    const unmapped = [];
+    Object.entries(errors || {}).forEach(([key, msgs]) => {
+      const msg = Array.isArray(msgs) ? msgs[0] : String(msgs);
+      const field = BACKEND_FIELD_MAP[key];
+      if (field) mapped[field] = msg;
+      else unmapped.push(msg);
+    });
+    setFieldErrors((prev) => ({ ...prev, ...mapped }));
+    if (mapped.photo) setPhotoError(mapped.photo);
+    setSubmitError(unmapped[0] || fallback || "Please correct the highlighted fields below.");
+  };
+
+  // Tab 1 → Tab 2. Block on client-side validation AND backend /preview
+  // validation, so the summary only ever shows data the backend will accept.
+  const handleNext = async () => {
     if (!applyValidation(validateDetails())) return;
-    setStep("summary");
+    if (validating) return;
+    setSubmitError("");
+    setValidating(true);
+    try {
+      await previewMemberRegistration(buildRegistrationFormData());
+      setStep("summary");
+    } catch (err) {
+      const data = err?.response?.data;
+      if (data?.errors) applyBackendErrors(data.errors, data.message);
+      else setSubmitError(data?.message || "We couldn't validate your details. Please try again.");
+    } finally {
+      setValidating(false);
+    }
   };
 
   const selectedGender = genders.find(
@@ -397,24 +473,7 @@ export default function StudentRegistration() {
     // primaryPhone, secondaryPhone, dob, address,
     // membershipType (club|club_student|independent), clubId, photo.
     // =============================================
-    const fd = new FormData();
-    fd.append("email", email);
-    fd.append("title", form.title);
-    fd.append("initials", form.initials);
-    fd.append("nameWithInitials", form.nameWithInitials);
-    fd.append("lastName", form.lastName);
-    fd.append("memberGenderId", form.memberGenderId);
-    // The "Student ID or Guardian ID" input maps to the API's `nic` field.
-    if (form.studentId) fd.append("nic", form.studentId);
-    if (form.dob) fd.append("dob", form.dob);
-    // Strip spaces so a number typed as "+94 71 234 5678" matches the
-    // backend's no-space phone regex.
-    fd.append("primaryPhone", form.primaryPhone.replace(/\s/g, ""));
-    if (form.secondaryPhone) fd.append("secondaryPhone", form.secondaryPhone.replace(/\s/g, ""));
-    fd.append("address", form.address);
-    fd.append("membershipType", membershipType);
-    if (membershipType === "club") fd.append("clubId", selectedClub);
-    fd.append("photo", photoFile);
+    const fd = buildRegistrationFormData();
 
     setSubmitError("");
     setSubmitting(true);
@@ -1226,9 +1285,10 @@ export default function StudentRegistration() {
               )}
               <button
                 onClick={handleNext}
-                className="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-6 py-3 rounded-lg text-sm transition"
+                disabled={validating}
+                className="bg-blue-700 hover:bg-blue-800 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold px-6 py-3 rounded-lg text-sm transition"
               >
-                Next — Review
+                {validating ? "Validating…" : "Next — Review"}
               </button>
             </div>
           </>
