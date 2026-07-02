@@ -179,16 +179,7 @@ const LoginCard = ({ navigate }) => {
 
   return (
     <>
-    <div className="bg-white rounded-2xl shadow-2xl p-7">
-      {/* USJ Branding — matches the login page (EmailStep) card */}
-      <div className="flex items-center gap-3 mb-6">
-        <img src={logo} alt="USJ" className="w-14 h-14 object-contain flex-shrink-0" />
-        <div>
-          <p className="font-semibold text-lg leading-tight" style={{ color: NAVY }}>University of Sri Jayewardenepura</p>
-          <p className="text-base" style={{ color: BLUE }}>Sports Facility Portal</p>
-        </div>
-      </div>
-
+    <div className="bg-white rounded-2xl shadow-2xl px-6 py-8 sm:px-7 sm:py-9">
       <h2 className="text-center text-3xl sm:text-4xl font-bold mb-2" style={{ color: NAVY }}>
         Sign In
       </h2>
@@ -329,7 +320,7 @@ function HomeTab({ navigate }) {
             </div>
 
             {/* LOGIN CARD */}
-            <div className="w-full sm:max-w-[27rem] lg:max-w-[30rem] mx-auto lg:mx-0 lg:justify-self-end">
+            <div className="w-full sm:max-w-[25rem] lg:max-w-[27rem] mx-auto lg:mx-0 lg:justify-self-end">
               <LoginCard navigate={navigate} />
             </div>
           </div>

@@ -78,6 +78,7 @@ const emptyCoach = () => ({
   dob: "",
   address: "",
   photo: null,
+  photoPreview: null, // object URL for the selected photo (created once, revoked on change)
   photoError: "",
 });
 
@@ -254,6 +255,17 @@ export default function ClubRegistration() {
   // Summary line shown above the wizard nav when a step fails validation.
   const [navError, setNavError] = useState("");
 
+  // Keep a live ref to coaches so the unmount cleanup can revoke every remaining
+  // photo blob URL without having to re-subscribe whenever coaches change.
+  const coachesRef = useRef(coaches);
+  coachesRef.current = coaches;
+  useEffect(
+    () => () => {
+      coachesRef.current.forEach((c) => c.photoPreview && URL.revokeObjectURL(c.photoPreview));
+    },
+    []
+  );
+
   // ── Genders (category-driven; from GET /api/member-genders) ──
   const [genders, setGenders] = useState([]);
   useEffect(() => {
@@ -308,22 +320,33 @@ export default function ClubRegistration() {
     if (!file) return;
     // accept="" is only a picker hint — validate the real MIME type so drag-drop
     // or a renamed non-image file can't slip through.
-    if (!ALLOWED_PHOTO_TYPES.includes(file.type)) {
-      setCoaches((prev) => prev.map(c => c.id === id ? { ...c, photoError: "Use a JPG, PNG, or WebP image", photo: null } : c));
-      return;
-    }
-    if (file.size > 1 * 1024 * 1024) {
-      setCoaches((prev) => prev.map(c => c.id === id ? { ...c, photoError: "Max 1MB", photo: null } : c));
-      return;
-    }
-    setCoaches((prev) => prev.map(c => c.id === id ? { ...c, photo: file, photoError: "" } : c));
-    clearCoachError(id, "photo");
+    const invalid = !ALLOWED_PHOTO_TYPES.includes(file.type)
+      ? "Use a JPG, PNG, or WebP image"
+      : file.size > 1 * 1024 * 1024
+      ? "Max 1MB"
+      : "";
+    // Create the preview URL once here (not inside the updater, which StrictMode
+    // may run twice) and revoke the coach's previous URL when we swap it in.
+    const preview = invalid ? null : URL.createObjectURL(file);
+    setCoaches((prev) =>
+      prev.map((c) => {
+        if (c.id !== id) return c;
+        if (c.photoPreview) URL.revokeObjectURL(c.photoPreview);
+        return invalid
+          ? { ...c, photo: null, photoPreview: null, photoError: invalid }
+          : { ...c, photo: file, photoPreview: preview, photoError: "" };
+      })
+    );
+    if (!invalid) clearCoachError(id, "photo");
   };
 
   const addCoach = () => setCoaches([...coaches, emptyCoach()]);
 
   const removeCoach = (id) => {
     if (coaches.length === 1) return;
+    // Free the removed coach's preview URL so it doesn't leak.
+    const removed = coaches.find((c) => c.id === id);
+    if (removed?.photoPreview) URL.revokeObjectURL(removed.photoPreview);
     setCoaches(coaches.filter(c => c.id !== id));
     // Drop any stored errors for the removed coach.
     setCoachErrors((prev) => {
@@ -605,7 +628,7 @@ export default function ClubRegistration() {
       <AuthShell>
         <div className="w-full max-w-2xl">
           <div className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 lg:p-12 w-full">
-            <GateHeader />
+            {GateHeader()}
 
             <h1 className="text-3xl font-bold text-gray-900 mb-2 text-center">Registration</h1>
             <p className="text-lg text-gray-500 mb-8 text-center">
@@ -645,8 +668,8 @@ export default function ClubRegistration() {
             </button>
           </div>
         </div>
-        <Footer />
-        {alreadyRegistered && <AlreadyRegisteredModal />}
+        {Footer()}
+        {alreadyRegistered && AlreadyRegisteredModal()}
       </AuthShell>
     );
   }
@@ -659,7 +682,7 @@ export default function ClubRegistration() {
       <AuthShell>
         <div className="w-full max-w-2xl">
           <div className="bg-white rounded-3xl shadow-xl p-12 w-full text-center">
-            <GateHeader />
+            {GateHeader()}
 
             <h2 className="text-3xl font-bold text-gray-900 mb-2">Verify Your Email</h2>
             <p className="text-lg text-gray-500 mb-1">Enter the 6 digit code sent to</p>
@@ -711,8 +734,8 @@ export default function ClubRegistration() {
             </button>
           </div>
         </div>
-        <Footer />
-        {alreadyRegistered && <AlreadyRegisteredModal />}
+        {Footer()}
+        {alreadyRegistered && AlreadyRegisteredModal()}
       </AuthShell>
     );
   }
@@ -798,7 +821,7 @@ export default function ClubRegistration() {
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-10 h-10 rounded-full bg-gray-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
                   {c.photo ? (
-                    <img src={URL.createObjectURL(c.photo)} alt="" className="w-full h-full object-cover" />
+                    <img src={c.photoPreview} alt="" className="w-full h-full object-cover" />
                   ) : (
                     <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -888,7 +911,7 @@ export default function ClubRegistration() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-blue-50 via-white to-blue-100 pt-28">
-      <NavBar />
+      {NavBar()}
       {/* Cap the content at the same 1600px width as the student form and centre it,
           so it uses the full desktop width but doesn't stretch edge-to-edge on ultrawide. */}
       <div className="w-full max-w-[114.2857rem] mx-auto flex flex-col flex-1">
@@ -896,7 +919,7 @@ export default function ClubRegistration() {
         <div className="flex flex-1">
         {/* Main content */}
         <div className="flex-1 p-4 sm:p-6 min-w-0">
-          <StepBar />
+          {StepBar()}
 
           {/* ── STEP 1: Club Details ── */}
           {step === 1 && (
@@ -992,7 +1015,7 @@ export default function ClubRegistration() {
                           coach.photoError || coachErr(coach.id, "photo") ? "border-red-500" : "border-gray-200"
                         }`}>
                           {coach.photo ? (
-                            <img src={URL.createObjectURL(coach.photo)} alt="" className="w-full h-full object-contain" />
+                            <img src={coach.photoPreview} alt="" className="w-full h-full object-contain" />
                           ) : (
                             <svg className="w-12 h-12 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -1012,7 +1035,11 @@ export default function ClubRegistration() {
                           <button
                             type="button"
                             onClick={() => {
-                              setCoaches(prev => prev.map(c => c.id === coach.id ? { ...c, photo: null, photoError: "" } : c));
+                              setCoaches(prev => prev.map(c => {
+                                if (c.id !== coach.id) return c;
+                                if (c.photoPreview) URL.revokeObjectURL(c.photoPreview);
+                                return { ...c, photo: null, photoPreview: null, photoError: "" };
+                              }));
                               // Reset the input so re-selecting the same file fires onChange.
                               if (coachPhotoRefs.current[coach.id]) coachPhotoRefs.current[coach.id].value = "";
                             }}
@@ -1127,7 +1154,7 @@ export default function ClubRegistration() {
             <div className="max-w-7xl mx-auto">
               <h2 className="font-bold text-base mb-1 text-center text-gray-900">Registration Summary</h2>
               <p className="text-xs text-gray-500 mb-4 text-center">Review your details before proceeding.</p>
-              <SummaryPanel twoColumn />
+              {SummaryPanel({ twoColumn: true })}
             </div>
           )}
 
@@ -1163,12 +1190,12 @@ export default function ClubRegistration() {
           <div className="hidden lg:block w-72 xl:w-80 p-4 pt-6 flex-shrink-0">
             <p className="font-bold text-sm mb-1 text-gray-900">Registration Summary</p>
             <p className="text-xs text-gray-500 mb-4">Review your details before proceeding.</p>
-            <SummaryPanel />
+            {SummaryPanel()}
           </div>
         )}
         </div>
 
-        <Footer />
+        {Footer()}
       </div>
 
       {/* ══ SUBMITTED (popup over the summary) ══ */}
