@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import EmailStep from "../../components/auth/EmailStep";
 import OtpStep from "../../components/auth/OtpStep";
 import AuthShell from "../../components/auth/AuthShell";
-import { sendOtp } from "../../services/authService";
+import { sendOtp, checkMember } from "../../services/authService";
 
 // Map the authenticated user's role (from the /verify-otp "account routing
 // details") to a placeholder message. The real dashboards aren't built yet, so
@@ -41,6 +41,25 @@ export default function LoginPage() {
     setStep("otp");
   };
 
+  // Runs before the login OTP is sent (EmailStep `beforeSend`). Blocks OTPs for
+  // unknown emails: only a real account — or a registration still in progress —
+  // is allowed a code (the latter so the existing verify flow can resume it). A
+  // genuinely unregistered email shows the "No Account Found" popup instead of
+  // sending a code, and offers to go to registration.
+  const handleBeforeSend = async (enteredEmail) => {
+    try {
+      const data = await checkMember(enteredEmail);
+      if (data?.account_exists || data?.registration_in_progress) return true;
+      setEmail(enteredEmail);
+      setNotRegistered(true);
+      return false;
+    } catch {
+      // If the check itself fails, fall back to the normal flow (send the OTP)
+      // rather than blocking a possibly-valid login.
+      return true;
+    }
+  };
+
   // Dismiss the "No Account Found" modal and keep the user on the login page
   // (return to the email step so they can try a different address).
   const closeNotRegistered = () => {
@@ -72,23 +91,13 @@ export default function LoginPage() {
     // Not registered: this email has no account yet.
     if (!registered) {
       // A pending registration (email verified, payment not completed) has no
-      // account row yet but carries its registration process — send them
-      // straight to the payment page to finish, rather than to "register".
+      // account row yet but /verify-otp returns its full registration process
+      // (submitted details + payment status). Send them to the summary page to
+      // review those details and complete payment, rather than to "register".
       const rp = data?.registration_process;
       if (rp?.process_id) {
-        const payee = {
-          process_id: rp.process_id,
-          payable_amount: rp.payable_amount,
-          club_name: rp.club_name,
-          email,
-        };
-        toast("Resume your registration payment.", { icon: "💳" });
-        navigate("/payment-method", {
-          state:
-            rp.registration_type === "club"
-              ? { club: payee, email }
-              : { member: payee, email },
-        });
+        toast("Welcome back — complete your registration.", { icon: "📝" });
+        navigate("/registration-status", { state: { registration: rp, email } });
         return;
       }
       // Genuinely no account and nothing in progress — prompt to register.
@@ -212,7 +221,7 @@ export default function LoginPage() {
         {/* Card */}
         <div className="w-full max-w-2xl">
           {step === "email"
-            ? <EmailStep initialEmail={initialEmail} onSend={handleSendOtp} />
+            ? <EmailStep initialEmail={initialEmail} onSend={handleSendOtp} beforeSend={handleBeforeSend} />
             : <OtpStep email={email} onVerify={handleVerify} onResend={() => sendOtp(email)} />
           }
 

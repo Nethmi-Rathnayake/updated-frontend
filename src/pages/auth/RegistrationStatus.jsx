@@ -6,14 +6,15 @@ import { getClub, getClubMembers } from "../../services/coachService";
 import { storageUrl } from "../../services/api";
 import PaymentMethod from "./PaymentMethod";
 
-// Shown after an ALREADY-REGISTERED member verifies their OTP but has NOT yet
-// paid. They can't enter a dashboard, so we show a READ-ONLY summary of the
-// details they submitted plus where they are in the registration workflow.
-// Details can be viewed but not edited until payment is complete.
+// Shown after a user with a PENDING (unpaid) registration verifies their OTP.
+// They have no account/dashboard yet, so we show a READ-ONLY summary of the
+// details they submitted plus where they are in the registration workflow, with
+// a "Complete Payment" action. Details can be viewed but not edited until paid.
 //
-// The basic member payload comes from /verify-otp via navigation state; we then
-// fetch the full record (phones, address, NIC, photo, processes) from
-// GET /api/members/{id} so every submitted field is visible.
+// The full payload arrives via navigation state as `registration` — the
+// /verify-otp `registration_process` object, which carries every submitted field
+// (member fields, or club + coaches) and the payment status. No extra fetch is
+// needed. (A legacy `member` state path that fetches /api/member/me is kept too.)
 
 const buildName = (initials, denoted, lastname) => {
   const lead = String(initials || denoted || "").trim();
@@ -149,26 +150,70 @@ export default function RegistrationStatus() {
   const location = useLocation();
 
   const initial = location.state?.member || null;
-  const email = location.state?.email || initial?.email || "";
+  // Preferred source: the pending `registration_process` from /verify-otp, which
+  // carries all submitted details (member fields, or club + coaches) + payment.
+  const pending = location.state?.registration || null;
+  const email =
+    location.state?.email || pending?.member?.email || initial?.email || "";
 
-  const [member, setMember] = useState(initial);
-  const [loading, setLoading] = useState(Boolean(initial?.id));
+  // Normalize whichever payload we have into the member/club/coaches shapes the
+  // rest of the page renders.
+  const derived = useMemo(() => {
+    if (!pending) return null;
+    if (pending.registration_type === "club") {
+      const list = pending.coaches || [];
+      const primary =
+        list.find((c) => String(c.coach_role || "").toLowerCase().includes("primary")) ||
+        list[0] || {};
+      return {
+        member: {
+          ...primary,
+          member_type: "Coach",
+          member_status: pending.process_status,
+          club_name: pending.club?.club_name,
+          process_id: pending.process_id,
+          payable_amount: pending.payable_amount,
+          payment_status: pending.payment_status,
+        },
+        club: pending.club || null,
+        coaches: list,
+      };
+    }
+    return {
+      member: {
+        ...(pending.member || {}),
+        member_status: pending.process_status,
+        process_id: pending.process_id,
+        payable_amount: pending.payable_amount,
+        payment_status: pending.payment_status,
+        process_status: pending.process_status,
+        club_verification_status: pending.club_verification_status,
+      },
+      club: null,
+      coaches: [],
+    };
+  }, [pending]);
+
+  const [member, setMember] = useState(() => derived?.member || initial);
+  const [loading, setLoading] = useState(Boolean(initial?.id) && !pending);
   // Club registration details (coaches register a whole club): the club record
-  // and every coach attached to it. Only fetched for coach members.
-  const [club, setClub] = useState(null);
-  const [coaches, setCoaches] = useState([]);
+  // and every coach attached to it. Populated from the payload (pending) or, in
+  // the legacy path, fetched for coach members.
+  const [club, setClub] = useState(derived?.club || null);
+  const [coaches, setCoaches] = useState(derived?.coaches || []);
   const [clubLoading, setClubLoading] = useState(false);
   // Controls the payment confirmation popup rendered over this page.
   const [showPayment, setShowPayment] = useState(false);
 
-  // No member in state (e.g. page opened directly) → back to login.
+  // No payload at all (page opened directly) → back to login.
   useEffect(() => {
-    if (!initial) navigate("/login", { replace: true });
-  }, [initial, navigate]);
+    if (!initial && !pending) navigate("/login", { replace: true });
+  }, [initial, pending, navigate]);
 
-  // Enrich the basic payload with the full submitted record.
+  // Legacy path only: enrich a basic `member` payload from /api/member/me.
+  // Skipped in pending mode (the payload is already complete and there's no token).
   useEffect(() => {
-    if (!initial?.id) return;
+    if (pending || !initial?.id) return;
     let on = true;
     getMemberMe()
       .then((full) => on && full && setMember((prev) => ({ ...prev, ...full })))
@@ -177,7 +222,7 @@ export default function RegistrationStatus() {
     return () => {
       on = false;
     };
-  }, [initial]);
+  }, [initial, pending]);
 
   // Re-pull the member after payment so the workflow tracker / banner flip to
   // the paid state without a full navigation.
@@ -198,7 +243,7 @@ export default function RegistrationStatus() {
   // visible here (not just this coach's personal details).
   const clubId = isCoach ? member?.club_id : null;
   useEffect(() => {
-    if (!clubId) return;
+    if (pending || !clubId) return;
     let on = true;
     setClubLoading(true);
     Promise.all([
@@ -215,7 +260,7 @@ export default function RegistrationStatus() {
     return () => {
       on = false;
     };
-  }, [clubId]);
+  }, [clubId, pending]);
 
   // Workflow tracker — reflects the member's real status.
   const steps = useMemo(() => {
@@ -414,7 +459,11 @@ export default function RegistrationStatus() {
                         ) : (
                           <div className="space-y-4">
                             {coaches.map((c) => (
-                              <CoachCard key={c.id} coach={c} isYou={c.id === member.id} />
+                              <CoachCard
+                                key={c.process_id ?? c.id}
+                                coach={c}
+                                isYou={String(c.email || "").toLowerCase() === String(email).toLowerCase()}
+                              />
                             ))}
                           </div>
                         )}
@@ -515,13 +564,27 @@ export default function RegistrationStatus() {
         </p>
       </div>
 
-      {/* Payment confirmation popup — rendered over this page (blurred behind). */}
+      {/* Payment confirmation popup — rendered over this page (blurred behind).
+          A club pays the club-level fee (club payee); everyone else pays a member
+          fee. Both carry process_id + payable_amount for PaymentMethod. */}
       {showPayment && (
         <PaymentMethod
-          member={member}
+          {...(pending && isCoach
+            ? {
+                club: {
+                  process_id: member.process_id,
+                  payable_amount: member.payable_amount,
+                  club_name: member.club_name,
+                },
+              }
+            : { member })}
           email={email}
           onClose={() => setShowPayment(false)}
-          onSuccess={refreshMember}
+          onSuccess={
+            pending
+              ? () => navigate("/login", { replace: true, state: { email } })
+              : refreshMember
+          }
         />
       )}
     </div>

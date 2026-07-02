@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import logo from "../assets/usjp-logo__1_-removebg-preview.png";
 import poolImg from "../assets/swiming pool image.jpg";
-import { sendOtp } from "../services/authService";
+import { sendOtp, checkMember } from "../services/authService";
 
 // ── Design tokens (shared across the whole app) ──
 const NAVY = "#0f1c3f";
@@ -158,9 +158,15 @@ const LoginCard = ({ navigate }) => {
     setError("");
     setSending(true);
     try {
-      // Send the OTP, then jump straight to the OTP step on /login. If this email
-      // has no account, verify-otp reports it there (account_exists=false) and
-      // the login page prompts the user to register instead.
+      // Check the email BEFORE sending any OTP. An unknown email (no account and
+      // no registration in progress) shows the "No Account Found" popup right
+      // here instead of sending a code. An existing account — or a registration
+      // still in progress — gets an OTP and continues to the /login OTP step.
+      const data = await checkMember(target);
+      if (!data?.account_exists && !data?.registration_in_progress) {
+        setNotRegistered(true);
+        return;
+      }
       await sendOtp(target);
       toast.success("OTP sent successfully!");
       navigate("/login", { state: { email: target, otpSent: true } });
@@ -264,17 +270,10 @@ const LoginCard = ({ navigate }) => {
           </div>
           <button
             onClick={() => navigate("/select-registration", { state: { email: email.trim() } })}
-            className="w-full text-white font-semibold py-3 rounded-lg text-sm transition mb-3"
+            className="w-full text-white font-semibold py-3 rounded-lg text-sm transition"
             style={{ backgroundColor: BLUE }}
           >
             Register Now
-          </button>
-          <button
-            onClick={() => setNotRegistered(false)}
-            className="w-full font-semibold text-sm hover:underline"
-            style={{ color: BLUE }}
-          >
-            Use a Different Email
           </button>
         </div>
       </div>

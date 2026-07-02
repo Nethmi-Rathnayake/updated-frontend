@@ -7,6 +7,7 @@ import {
   sendOtp as sendOtpRequest,
   verifyOtp as verifyOtpRequest,
   registerMember,
+  checkMember,
 } from "../../services/authService";
 import PaymentMethod from "./PaymentMethod";
 
@@ -180,9 +181,18 @@ export default function StudentRegistration() {
       return;
     }
     setEmailError("");
-    // Re-registration is caught after verification: verify-otp reports
-    // account_exists, at which point we show the "already registered" popup.
-    // (There is no public pre-send existence check, so we just send the code.)
+    // Block re-registration BEFORE sending an OTP: if this email already has an
+    // account, show the "already registered" popup (with a Log In option) and
+    // send no code. (verify-otp's account_exists check remains a backstop.)
+    try {
+      const check = await checkMember(email);
+      if (check?.account_exists) {
+        setAlreadyRegistered(true);
+        return;
+      }
+    } catch {
+      // If the check fails, fall through and let the normal flow proceed.
+    }
     const ok = await sendOtp();
     if (!ok) {
       setEmailError("Failed to send OTP. Please try again.");
@@ -530,15 +540,9 @@ export default function StudentRegistration() {
         </div>
         <button
           onClick={() => navigate("/login", { state: { email } })}
-          className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm transition mb-3"
+          className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg text-sm transition"
         >
           Log In
-        </button>
-        <button
-          onClick={closeAlreadyRegistered}
-          className="w-full text-blue-600 font-semibold text-sm hover:underline"
-        >
-          Use a Different Email
         </button>
       </div>
     </div>

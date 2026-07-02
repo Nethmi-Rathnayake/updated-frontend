@@ -7,6 +7,14 @@ import api, { setMemberToken, clearMemberToken } from "./api";
 //   GET  /api/member/me            (member bearer token)
 //   POST /api/member/logout        (member bearer token)
 
+// Pre-OTP existence check (POST /api/member/check). Public endpoint that reports
+// whether an email already has an account or a registration still in progress,
+// WITHOUT sending an OTP. Response:
+//   { account_exists, registration_in_progress, flow, member, registration_process, ... }
+// The login & registration flows call this first to decide whether to send a code.
+export const checkMember = (email) =>
+  api.post("/api/member/check", { email }).then((res) => res.data);
+
 export const sendOtp = (email) =>
   api.post("/send-otp", { email }).then((res) => res.data);
 

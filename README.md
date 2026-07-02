@@ -1,70 +1,79 @@
-# Getting Started with Create React App
+# SFMIS Frontend
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+React 19 single-page app for the **Sports Federation Member Information System (SFMIS)**. It is the client for a separate Laravel API (`SFMIS-Backend`) and talks to it over HTTP only — the two share no code.
 
-## Available Scripts
+The app serves two audiences from one bundle:
 
-In the project directory, you can run:
+- **Public member portal** — passwordless email-OTP login, member/club registration, payment, and the member / coach / student / independent dashboards.
+- **Back-office admin** — password login with role-based access control (RBAC) for managing system users, roles, and permissions, under `/admin/*`.
 
-### `npm start`
+Built with Create React App, React Router 7, axios, Tailwind CSS, and react-hot-toast.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Prerequisites
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+- Node.js 18+ and npm
+- A running instance of the `SFMIS-Backend` Laravel API (defaults to `http://localhost:8000`)
 
-### `npm test`
+## Setup
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+```bash
+npm install
+```
 
-### `npm run build`
+The backend origin is configured via a single environment variable, `REACT_APP_API_URL`. It defaults to `http://localhost:8000`, so no `.env` is needed for the standard local setup. To point at a different backend, create a `.env` in this directory:
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+```
+REACT_APP_API_URL=http://your-backend-host:8000
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+The backend must serve uploaded files and have CORS `supports_credentials=true` (the OTP step relies on the Laravel session cookie).
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Available scripts
 
-### `npm run eject`
+Run from this (`frontend/`) directory:
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+| Command | Description |
+| --- | --- |
+| `npm start` | Dev server at http://localhost:3000 (hot reload; ESLint runs in-console) |
+| `npm run build` | Production build to `build/` |
+| `npm test` | Jest + React Testing Library in interactive watch mode |
+| `npm test -- --watchAll=false src/App.test.js` | Run a single test file once (non-watch) |
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+There is no separate lint step — ESLint (`react-app`, `react-app/jest`) runs as part of `start`/`build`.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+## Project structure
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+```
+src/
+  App.js                     Real entry/router (routes/AppRouter.jsx is an unused stub)
+  services/                  Data layer (axios); one module per backend area
+    api.js                   Shared axios instance, token handling, storageUrl()
+    authService.js           Member OTP: send/verify OTP, register, me, logout
+    memberService.js         Member record, payments, payment simulation
+    coachService.js          Coach: club verification, club members, facilities
+    systemAuthService.js     Admin login/me/logout
+    systemUserService.js     System-user CRUD (RBAC)
+    systemRoleService.js     Role & permission management
+  context/AuthContext.jsx    Admin auth state; useAuth() exposes can(), isSuperAdmin
+  components/
+    auth/                    AuthShell, EmailStep, OtpStep
+    common/DashboardUI.jsx   Shared design system (tokens, form classes, primitives)
+  pages/
+    auth/                    Login, registration flows, payment
+    admin/                   AdminLogin, AdminLayout, AdminDashboard, SystemUsers, Roles
+    coach/ student/ member/ independent/   Role dashboards
+    HomePage.jsx
+```
 
-## Learn More
+## Authentication (two separate flows)
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+The app uses **two distinct Sanctum bearer tokens** with different audiences — a member token cannot reach admin routes and vice-versa. Both are kept in `sessionStorage` (survive an in-tab refresh, but never auto-authenticate across browser sessions):
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+- **Member** (`sfmis_member_token`) — issued by `/verify-otp` for an existing member. No `AuthContext`; public routes at root paths.
+- **Admin** (`sfmis_admin_token`) — issued by `/api/system/login`. Gated by `AuthProvider` + `ProtectedRoute`; routes under `/admin/*` hitting `/api/system/*`. `useAuth().can(permission)` gates UI (the backend is the real authority).
 
-### Code Splitting
+The shared axios instance (`src/services/api.js`) selects the token by request URL and, on a `401`, clears the relevant token and redirects to the matching login page.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+## Further reading
 
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+`CLAUDE.md` in this directory is the authoritative developer guide — it documents the auth flows in depth, the backend response quirks (the `unwrap()` helper, `_method=PUT` for multipart updates, `storageUrl()`), the `DashboardUI` design system, and the current backend-alignment gaps. Read it before making non-trivial changes.
